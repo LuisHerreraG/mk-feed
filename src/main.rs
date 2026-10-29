@@ -644,6 +644,16 @@ fn doctor(cli: &Cli, ctx: &Ctx, online: bool) -> Result<i32> {
             cfg.style_path().display().to_string(),
         );
         push("redirect", true, cfg.redirect_uri());
+        let budget = publish::posted_today(cfg);
+        push(
+            "daily_budget",
+            cfg.max_posts_per_day == 0 || budget < cfg.max_posts_per_day,
+            if cfg.max_posts_per_day == 0 {
+                format!("{budget} posted today, no cap")
+            } else {
+                format!("{budget}/{} posted today", cfg.max_posts_per_day)
+            },
+        );
         push(
             "default_mode",
             matches!(cfg.default_mode.as_str(), "auto" | "confirm"),

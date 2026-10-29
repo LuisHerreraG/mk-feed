@@ -28,6 +28,9 @@ pub struct Config {
     /// `http://127.0.0.1` redirect: register any https URL and use the paste
     /// flow (`mk-feed auth --url '<redirected URL>'`).
     pub redirect_uri: Option<String>,
+    /// Hard ceiling on posts per calendar day. 0 disables the guard. A circuit
+    /// breaker against a pathological loop, not a scheduling policy.
+    pub max_posts_per_day: u32,
     /// `PUBLIC` or `CONNECTIONS`.
     pub visibility: String,
     /// IANA zone used to interpret naive timestamps in `schedule --at`.
@@ -50,6 +53,7 @@ impl Default for Config {
             api_version_stale_after: "2026-12-01".into(),
             redirect_port: 8787,
             redirect_uri: None,
+            max_posts_per_day: 3,
             visibility: "PUBLIC".into(),
             timezone: "America/Lima".into(),
             notify: true,
@@ -116,6 +120,7 @@ impl Config {
              api_version_stale_after = \"{}\"\n\
              redirect_port = {}
              # redirect_uri = \"https://...\"   # only if LinkedIn refuses loopback (paste flow)\n\
+             max_posts_per_day = 3                 # hard stop; 0 disables
              visibility = \"PUBLIC\"                 # PUBLIC | CONNECTIONS\n\
              timezone = \"{}\"\n\
              notify = true\n\

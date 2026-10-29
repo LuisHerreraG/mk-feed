@@ -449,3 +449,48 @@ fn a_failed_upload_publishes_nothing() {
     let after = sandbox.read_post("upload-fails");
     assert!(after.contains("state: \"ready\""), "{after}");
 }
+
+#[test]
+fn the_daily_cap_stops_a_runaway_loop() {
+    let sandbox = Sandbox::new("daily-cap");
+    sandbox.write_post("over-cap", "", "cuerpo 8");
+    plant_credentials(&sandbox);
+
+    // Three posts already went out today, per the log the tool itself writes.
+    let today = "2026-10-29T12:00:00+00:00";
+    let mut log = String::new();
+    for i in 0..3 {
+        log.push_str(&format!(
+            "{{\"at\":\"{today}\",\"event\":\"posted\",\"id\":\"earlier-{i}\",\"urn\":\"urn:li:share:{i}\",\"url\":\"\"}}\n"
+        ));
+    }
+    std::fs::write(sandbox.dir.join("state/publish.jsonl"), log).unwrap();
+
+    let out = sandbox.run(&["send", "over-cap"]);
+    clear_credentials(&sandbox);
+
+    let text = format!("{}{}", stdout(&out), String::from_utf8_lossy(&out.stderr));
+    assert_eq!(code(&out), 3, "the cap is a refusal: {text}");
+    assert!(text.to_lowercase().contains("daily cap"), "{text}");
+    // And the draft is untouched: no arm, no state change.
+    assert!(sandbox.read_post("over-cap").contains("state: \"ready\""));
+}
+
+#[test]
+fn a_posted_post_cannot_be_sent_again() {
+    let sandbox = Sandbox::new("no-double");
+    sandbox.write_post("already-out", "", "cuerpo 11");
+    let path = sandbox.drafts().join("already-out.md");
+    let raw = std::fs::read_to_string(&path)
+        .unwrap()
+        .replace("state: \"ready\"", "state: \"posted\"")
+        .replace("urn: \"\"", "urn: \"urn:li:share:9\"");
+    std::fs::write(&path, raw).unwrap();
+    plant_credentials(&sandbox);
+
+    let out = sandbox.run(&["send", "already-out"]);
+    clear_credentials(&sandbox);
+
+    assert_eq!(code(&out), 3, "posted means done: {}", stdout(&out));
+    assert!(sandbox.read_post("already-out").contains("state: \"posted\""));
+}

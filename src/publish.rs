@@ -47,6 +47,59 @@ pub struct Report {
     pub warnings: Vec<String>,
 }
 
+/// `https://www.linkedin.com/feed/update/<urn>/` → `<urn>`
+fn urn_from_url(url: &str) -> String {
+    url.split("/update/")
+        .nth(1)
+        .map(|tail| tail.trim_end_matches('/').to_string())
+        .unwrap_or_default()
+}
+
+/// How many posts actually went out today, counted from the log — the same
+/// record that answers "what did I publish", used here as a circuit breaker.
+pub fn posted_today(cfg: &Config) -> u32 {
+    let today = chrono::Local::now().date_naive();
+    let raw = std::fs::read_to_string(cfg.state_file("publish.jsonl")).unwrap_or_default();
+    let mut live: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for entry in raw
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+    {
+        let event = entry.get("event").and_then(|e| e.as_str()).unwrap_or("");
+        // Older entries carried no `urn` on the way out; the url is enough to
+        // match them, so a repaired history needs no migration.
+        let urn = {
+            let from_field = entry.get("urn").and_then(|u| u.as_str()).unwrap_or("");
+            if from_field.is_empty() {
+                urn_from_url(entry.get("url").and_then(|u| u.as_str()).unwrap_or(""))
+            } else {
+                from_field.to_string()
+            }
+        };
+        if urn.is_empty() {
+            continue;
+        }
+        // A post that came down does not spend the budget: the guard is about
+        // what is standing in public, not about attempts.
+        if event == "unpublished" {
+            live.remove(&urn);
+            continue;
+        }
+        if event == "posted" {
+            let same_day = entry
+                .get("at")
+                .and_then(|at| at.as_str())
+                .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+                .map(|at| at.with_timezone(&chrono::Local).date_naive() == today)
+                .unwrap_or(false);
+            if same_day {
+                live.insert(urn);
+            }
+        }
+    }
+    live.len() as u32
+}
+
 pub fn execute(cfg: &Config, queue: &Queue, id: &str, force: bool, dry_run: bool) -> Result<Report> {
     let mut post = queue.get(id)?;
     let state_before = post.state.clone();
@@ -75,6 +128,18 @@ pub fn execute(cfg: &Config, queue: &Queue, id: &str, force: bool, dry_run: bool
             "{} is {} — a human must resolve it first (--force to override)",
             post.id, post.state
         ))));
+    }
+
+    // The circuit breaker. A loop, a stuck daemon or a confused agent cannot
+    // turn into a stream of posts: past the cap, every path refuses.
+    if cfg.max_posts_per_day > 0 {
+        let today = posted_today(cfg);
+        if today >= cfg.max_posts_per_day {
+            return Err(anyhow::Error::new(Refusal(format!(
+                "daily cap reached: {today}/{} posts today (max_posts_per_day) — nothing was sent",
+                cfg.max_posts_per_day
+            ))));
+        }
     }
 
     let commentary = compose_commentary(&post);
@@ -306,7 +371,9 @@ pub fn unpublish(cfg: &Config, queue: &Queue, id: &str) -> Result<String> {
             queue.save(&post)?;
             drop(_guard);
             remove_index_row(cfg, &urn)?;
-            log_line(cfg, &post, "unpublished", &api::public_url(&urn), "")?;
+            let mut audited = post.clone();
+            audited.urn = urn.clone();
+            log_line(cfg, &audited, "unpublished", &api::public_url(&urn), "")?;
             Ok(urn)
         }
         Err((SendError::Rejected(msg), _)) => Err(anyhow::Error::new(Refusal(format!(
