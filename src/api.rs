@@ -19,6 +19,29 @@ pub fn urlencode(value: &str) -> String {
     out
 }
 
+/// LinkedIn's `commentary` is not plain text: it is a "little format" where a
+/// handful of characters are syntax. An unescaped "(" starts something the
+/// parser cannot finish, and the platform **silently truncates the post at that
+/// point** — measured with three probes on 2026-10-28: 229 of 1348 characters
+/// arrived, then 17 of 327, while square brackets came through untouched.
+///
+/// The escape character is a backslash. This list mirrors what Postiz escapes
+/// (`fixText` in its LinkedIn provider, AGPL — read, then verified against the
+/// live API, not copied).
+pub fn escape_little_format(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 24);
+    for ch in text.chars() {
+        match ch {
+            '\\' | '<' | '>' | '[' | ']' | '(' | ')' | '{' | '}' | '*' | '_' | '~' | '|' => {
+                out.push('\\');
+                out.push(ch);
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
 /// The two failure kinds that matter, because they demand different actions.
 #[derive(Debug)]
 pub enum SendError {
@@ -64,7 +87,7 @@ pub fn create_post(
     // which is safe because a 401 never published anything.
     let payload = json!({
         "author": author_urn,
-        "commentary": commentary,
+        "commentary": escape_little_format(commentary),
         "visibility": visibility,
         "distribution": {
             "feedDistribution": "MAIN_FEED",
@@ -125,6 +148,69 @@ pub fn create_post(
     ))
 }
 
+/// Delete a post. `w_member_social` allows it, and it is the only way to undo a
+/// test post without touching the browser.
+pub fn delete_post(
+    client: &reqwest::blocking::Client,
+    access_token: &str,
+    urn: &str,
+    api_version: &str,
+) -> Result<(), (SendError, bool)> {
+    if offline() {
+        return Err((
+            SendError::Rejected("MK_FEED_OFFLINE is set: nothing was deleted".into()),
+            false,
+        ));
+    }
+    let encoded = urlencode(urn);
+    let response = client
+        .delete(format!("https://api.linkedin.com/rest/posts/{encoded}"))
+        .header("Authorization", format!("Bearer {access_token}"))
+        .header("X-Restli-Protocol-Version", "2.0.0")
+        .header("LinkedIn-Version", api_version)
+        .send();
+
+    match response {
+        Ok(r) if r.status().as_u16() == 204 || r.status().is_success() => Ok(()),
+        Ok(r) if r.status().as_u16() == 401 => {
+            Err((SendError::Rejected("401".into()), true))
+        }
+        Ok(r) if r.status().is_client_error() => {
+            Err((SendError::Rejected(format!("{}", r.status())), false))
+        }
+        Ok(r) => Err((SendError::Unknown(format!("{}", r.status())), false)),
+        Err(e) => Err((SendError::Unknown(format!("network: {e}")), false)),
+    }
+}
+
 pub fn public_url(urn: &str) -> String {
     format!("https://www.linkedin.com/feed/update/{urn}/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::escape_little_format;
+
+    /// Measured 2026-10-28: an unescaped "(" made LinkedIn keep 229 of 1348
+    /// characters and discard the rest. The escape set comes from Postiz's
+    /// `fixText`; this test pins the behaviour so a refactor cannot quietly
+    /// reintroduce the truncation.
+    #[test]
+    fn linkedin_syntax_is_escaped() {
+        let raw = "Antes: siete contenedores (Postgres, Redis) y **nada** [sic] 3 veces.";
+        let escaped = escape_little_format(raw);
+        assert_eq!(
+            escaped,
+            "Antes: siete contenedores \\(Postgres, Redis\\) y \\*\\*nada\\*\\* \\[sic\\] 3 veces."
+        );
+        // Nothing else answers: removing the escape character must give the
+        // original text back, byte for byte.
+        assert_eq!(escaped.replace('\\', ""), raw);
+    }
+
+    #[test]
+    fn plain_text_is_untouched() {
+        let raw = "Un scheduler que reintenta es un scheduler que publica dos veces";
+        assert_eq!(escape_little_format(raw), raw);
+    }
 }

@@ -117,6 +117,8 @@ enum Cmd {
         #[arg(long)]
         url: Option<String>,
     },
+    /// Delete a published post and put the draft back in the queue
+    Unpublish { id: String },
     /// Publish log
     Log {
         #[arg(long, default_value_t = 20)]
@@ -515,6 +517,17 @@ fn run(cli: &Cli, ctx: &Ctx) -> Result<i32> {
             Ok(EXIT_OK)
         }
 
+        Cmd::Unpublish { id } => {
+            let cfg = load(cli)?;
+            let queue = Queue::open(&cfg.queue)?;
+            let urn = publish::unpublish(&cfg, &queue, id)?;
+            ctx.emit(
+                serde_json::json!({"ok": true, "id": id, "deleted": urn}),
+                || println!("{id}: deleted {urn} — the draft is back to `ready`"),
+            );
+            Ok(EXIT_OK)
+        }
+
         Cmd::Log { tail } => {
             let cfg = load(cli)?;
             let path = cfg.state_file("publish.jsonl");
@@ -572,6 +585,7 @@ fn send(cli: &Cli, ctx: &Ctx, id: &str, dry_run: bool, force: bool) -> Result<i3
             "url": report.url,
             "chars": report.chars,
             "message": report.message,
+            "payload": report.payload,
             "warnings": report.warnings,
         }),
         || {

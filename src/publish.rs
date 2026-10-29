@@ -33,6 +33,8 @@ impl std::error::Error for Refusal {}
 
 #[derive(Debug, Serialize)]
 pub struct Report {
+    /// The commentary exactly as it will go on the wire (escaped), for dry runs.
+    pub payload: String,
     pub id: String,
     pub state_before: String,
     pub state_after: String,
@@ -84,6 +86,7 @@ pub fn execute(cfg: &Config, queue: &Queue, id: &str, force: bool, dry_run: bool
 
     if dry_run {
         return Ok(Report {
+            payload: crate::api::escape_little_format(&commentary),
             id: post.id.clone(),
             state_before: state_before.clone(),
             state_after: state_before,
@@ -160,6 +163,7 @@ pub fn execute(cfg: &Config, queue: &Queue, id: &str, force: bool, dry_run: bool
             let url = api::public_url(&urn);
             log_line(cfg, &post, "posted", &url, "")?;
             Report {
+                payload: String::new(),
                 id: post.id.clone(),
                 state_before: prior_state,
                 state_after: "posted".into(),
@@ -176,6 +180,7 @@ pub fn execute(cfg: &Config, queue: &Queue, id: &str, force: bool, dry_run: bool
             queue.save(&post)?;
             log_line(cfg, &post, "failed", "", &msg)?;
             Report {
+                payload: String::new(),
                 id: post.id.clone(),
                 state_before: prior_state,
                 state_after: "failed".into(),
@@ -192,6 +197,7 @@ pub fn execute(cfg: &Config, queue: &Queue, id: &str, force: bool, dry_run: bool
             queue.save(&post)?;
             log_line(cfg, &post, "unknown", "", &msg)?;
             Report {
+                payload: String::new(),
                 id: post.id.clone(),
                 state_before: prior_state,
                 state_after: "unknown".into(),
@@ -215,6 +221,51 @@ pub fn compose_commentary(post: &Post) -> String {
         post.hook.trim().to_string()
     } else {
         format!("{}\n\n{}", post.hook.trim(), body)
+    }
+}
+
+/// Undo a publish: delete the post and put the draft back in the queue.
+/// Written for the honest use case — publishing a test post to prove the pipe
+/// works, then taking it down.
+pub fn unpublish(cfg: &Config, queue: &Queue, id: &str) -> Result<String> {
+    let post = queue.get(id)?;
+    if post.urn.is_empty() {
+        return Err(anyhow::Error::new(Refusal(format!(
+            "{} has no urn — it was never published through the API",
+            post.id
+        ))));
+    }
+    let token = auth::access_token(cfg)?;
+    let client = api::http()?;
+    let mut outcome = api::delete_post(&client, &token, &post.urn, &cfg.api_version);
+    if let Err((SendError::Rejected(msg), stale)) = &outcome {
+        if *stale && msg.starts_with("401") {
+            let tokens = auth::refresh(cfg)?;
+            auth::store_tokens(cfg, &tokens)?;
+            outcome = api::delete_post(&client, &tokens.access_token, &post.urn, &cfg.api_version);
+        }
+    }
+    match outcome {
+        Ok(()) => {
+            let urn = post.urn.clone();
+            let _guard = queue.lock()?;
+            let mut post = queue.get(id)?;
+            post.state = "ready".into();
+            post.urn.clear();
+            post.posted_at.clear();
+            post.note = format!("unpublished {urn} at {}", chrono::Local::now().to_rfc3339());
+            queue.save(&post)?;
+            drop(_guard);
+            remove_index_row(cfg, &urn)?;
+            log_line(cfg, &post, "unpublished", &api::public_url(&urn), "")?;
+            Ok(urn)
+        }
+        Err((SendError::Rejected(msg), _)) => Err(anyhow::Error::new(Refusal(format!(
+            "LinkedIn refused the delete: {msg}"
+        )))),
+        Err((SendError::Unknown(msg), _)) => {
+            anyhow::bail!("unknown outcome deleting the post: {msg}")
+        }
     }
 }
 
@@ -243,6 +294,21 @@ fn log_line(cfg: &Config, post: &Post, event: &str, url: &str, error: &str) -> R
         .append(true)
         .open(cfg.state_file("publish.jsonl"))?;
     writeln!(file, "{line}")?;
+    Ok(())
+}
+
+/// Drop the index row that points at this urn.
+fn remove_index_row(cfg: &Config, urn: &str) -> Result<()> {
+    let Some(index) = &cfg.index else {
+        return Ok(());
+    };
+    if !index.exists() {
+        return Ok(());
+    }
+    let url = api::public_url(urn);
+    let raw = std::fs::read_to_string(index)?;
+    let kept: Vec<&str> = raw.lines().filter(|line| !line.contains(&url)).collect();
+    std::fs::write(index, format!("{}\n", kept.join("\n")))?;
     Ok(())
 }
 

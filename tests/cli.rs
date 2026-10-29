@@ -91,6 +91,49 @@ impl Sandbox {
     }
 }
 
+/// Plant a valid-looking credential in the sandbox's own Keychain service, so a
+/// test exercises the *network gate* rather than dying on "no token".
+fn plant_credentials(sandbox: &Sandbox) {
+    let future = "2099-01-01T00:00:00+00:00";
+    for (account, value) in [
+        ("linkedin.access_token", "fake-access-token".to_string()),
+        (
+            "linkedin.meta",
+            format!(
+                "{{\"sub\":\"abc\",\"name\":\"test\",\"scope\":\"w_member_social\",\"obtained_at\":\"\",\"expires_at\":\"{future}\",\"refresh_expires_at\":\"\"}}"
+            ),
+        ),
+    ] {
+        std::process::Command::new("/usr/bin/security")
+            .args([
+                "add-generic-password",
+                "-U",
+                "-a",
+                account,
+                "-s",
+                &sandbox.service,
+                "-w",
+                &value,
+            ])
+            .output()
+            .unwrap();
+    }
+}
+
+fn clear_credentials(sandbox: &Sandbox) {
+    for account in ["linkedin.access_token", "linkedin.meta"] {
+        let _ = std::process::Command::new("/usr/bin/security")
+            .args([
+                "delete-generic-password",
+                "-a",
+                account,
+                "-s",
+                &sandbox.service,
+            ])
+            .output();
+    }
+}
+
 fn code(output: &Output) -> i32 {
     output.status.code().unwrap_or(-1)
 }
@@ -300,49 +343,44 @@ fn a_publish_that_cannot_start_leaves_the_post_where_it_was() {
 fn the_network_is_gated_even_with_a_valid_looking_token() {
     let sandbox = Sandbox::new("offline-gate");
     sandbox.write_post("gated", "", "cuerpo 3");
-
-    // A token that looks real, in the sandbox's own Keychain service.
-    let future = "2099-01-01T00:00:00+00:00";
-    for (account, value) in [
-        ("linkedin.access_token", "fake-access-token".to_string()),
-        (
-            "linkedin.meta",
-            format!(
-                "{{\"sub\":\"abc\",\"name\":\"test\",\"scope\":\"w_member_social\",\"obtained_at\":\"\",\"expires_at\":\"{future}\",\"refresh_expires_at\":\"\"}}"
-            ),
-        ),
-    ] {
-        std::process::Command::new("/usr/bin/security")
-            .args([
-                "add-generic-password",
-                "-U",
-                "-a",
-                account,
-                "-s",
-                &sandbox.service,
-                "-w",
-                &value,
-            ])
-            .output()
-            .unwrap();
-    }
+    plant_credentials(&sandbox);
 
     let out = sandbox.run(&["send", "gated"]);
-    for account in ["linkedin.access_token", "linkedin.meta"] {
-        let _ = std::process::Command::new("/usr/bin/security")
-            .args([
-                "delete-generic-password",
-                "-a",
-                account,
-                "-s",
-                &sandbox.service,
-            ])
-            .output();
-    }
+    clear_credentials(&sandbox);
 
-    let text = format!("{}{}", stdout(&out), String::from_utf8_lossy(&out.stderr));
+    let text = format!("{}{}", stdout(&out), String::from_utf8_lossy(&out.stderr)).to_lowercase();
     assert!(
         text.contains("offline") || text.contains("network disabled"),
         "MK_FEED_OFFLINE must stop the request before it leaves: {text}"
     );
 }
+
+#[test]
+fn unpublish_refuses_a_draft_that_never_went_out() {
+    let sandbox = Sandbox::new("unpublish");
+    sandbox.write_post("never-sent", "", "cuerpo 4");
+    let out = sandbox.run(&["unpublish", "never-sent"]);
+    assert_eq!(code(&out), 3, "no urn means nothing to delete");
+    assert!(sandbox.read_post("never-sent").contains("state: \"ready\""));
+}
+
+#[test]
+fn unpublish_cannot_reach_the_network_in_a_test() {
+    let sandbox = Sandbox::new("unpublish-gate");
+    sandbox.write_post("posted-once", "", "cuerpo 6");
+    let path = sandbox.drafts().join("posted-once.md");
+    let raw = std::fs::read_to_string(&path)
+        .unwrap()
+        .replace("state: \"ready\"", "state: \"posted\"")
+        .replace("urn: \"\"", "urn: \"urn:li:share:1\"");
+    std::fs::write(&path, raw).unwrap();
+    plant_credentials(&sandbox);
+
+    let out = sandbox.run(&["unpublish", "posted-once"]);
+    clear_credentials(&sandbox);
+    let text = format!("{}{}", stdout(&out), String::from_utf8_lossy(&out.stderr)).to_lowercase();
+    assert!(text.contains("offline") || text.contains("network disabled"), "{text}");
+    // The post stays recorded as published: nothing was deleted.
+    assert!(sandbox.read_post("posted-once").contains("state: \"posted\""));
+}
+

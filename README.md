@@ -163,6 +163,22 @@ mk-feed mark <id> --url <post-url>   # closes the loop: state, log, PUBLISHED.md
 the record does not care how the bytes arrived. What you lose is the click, not
 the bookkeeping.
 
+## Measured quirks (all verified against the live API, 2026-10-28)
+
+- **`commentary` is not plain text.** It is a "little format" where `( ) [ ] { }
+  * _ ~ | < > \` are syntax. An unescaped `(` makes LinkedIn **truncate the post
+  at that character and silently discard the rest** — three probes: 229 of 1348
+  characters arrived, then 17 of 327, while square brackets came through fine.
+  `mk-feed` escapes the whole set on the wire (the list mirrors Postiz's
+  `fixText`, read then verified, not copied), so drafts keep their parentheses
+  and arrive intact. `send --dry-run --json` prints the escaped payload.
+- **No markdown.** `**bold**` and `` `code` `` render as raw characters. Escaped,
+  they are harmless literal characters rather than post-breaking syntax.
+- **The feed shows ~229 characters** and hides the rest behind "ver más". Not a
+  defect: put the claim in the first line.
+- **Blank lines survive** through the API, unlike pasting into the web composer.
+- **Long URLs get shortened** by LinkedIn (`github.com/...` becomes `lnkd.in/...`).
+
 ## Scope
 
 A personal tool, published because the work is worth reading. It does one

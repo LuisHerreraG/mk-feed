@@ -29,6 +29,10 @@ impl Issue {
 
 pub const MAX_CHARS: usize = 3000;
 
+fn compose_has(post: &Post, needle: &str) -> bool {
+    post.hook.contains(needle)
+}
+
 pub fn run(post: &Post, queue_dir: &Path) -> Vec<Issue> {
     let mut issues = Vec::new();
     macro_rules! fail {
@@ -112,6 +116,27 @@ pub fn run(post: &Post, queue_dir: &Path) -> Vec<Issue> {
         fail!(
             "media-unsupported",
             "publishing with media is not implemented yet — post text only".into(),
+        );
+    }
+
+    // LinkedIn renders no markdown: asterisks and backticks arrive verbatim.
+    let markdown: Vec<&str> = [
+        ("**", "**bold**"),
+        ("`", "`code`"),
+        ("##", "## heading"),
+        ("> ", "> quote"),
+    ]
+    .iter()
+    .filter(|(needle, _)| post.body.contains(needle) || compose_has(post, needle))
+    .map(|(_, label)| *label)
+    .collect();
+    if !markdown.is_empty() {
+        warn!(
+            "markdown-literal",
+            format!(
+                "LinkedIn renders markdown literally — {} will show as raw characters",
+                markdown.join(", ")
+            )
         );
     }
 
