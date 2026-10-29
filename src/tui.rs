@@ -344,7 +344,12 @@ impl<'a> App<'a> {
                         .to_string(),
                     None => String::new(),
                 };
-                let line = format!("{:<10} {:<10} {}", post.state, when, post.id);
+                let media = if post.media.is_empty() {
+                    "   ".to_string()
+                } else {
+                    format!("▣{} ", post.media.len())
+                };
+                let line = format!("{:<10}{}{:<10} {}", post.state, media, when, post.id);
                 let style = match post.state.as_str() {
                     "posted" => Style::default().fg(Color::Green),
                     "failed" => Style::default().fg(Color::Red),
@@ -380,6 +385,27 @@ impl<'a> App<'a> {
                     lines.push(Line::from(Span::styled(
                         format!("url       {}", crate::api::public_url(&post.urn)),
                         Style::default().fg(Color::Green),
+                    )));
+                }
+                if !post.media.is_empty() {
+                    let missing = post
+                        .media
+                        .iter()
+                        .filter(|item| !self.queue.dir.join(item).exists())
+                        .count();
+                    let style = if missing > 0 {
+                        Style::default().fg(Color::Red)
+                    } else {
+                        Style::default().fg(Color::Cyan)
+                    };
+                    lines.push(Line::from(Span::styled(
+                        format!(
+                            "media     {} image{} — {}",
+                            post.media.len(),
+                            if post.media.len() == 1 { "" } else { "s" },
+                            post.media.join(", ")
+                        ),
+                        style,
                     )));
                 }
                 if !post.note.is_empty() {
@@ -463,6 +489,14 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("mk-feed-tui-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("01.png"), b"not really a png").unwrap();
+        std::fs::write(
+            dir.join("with-images.md"),
+            "---\nid: \"with-images\"\nhook: \"un hook con imagenes\"\nartifact: \"https://example.com/c/2\"\n\
+             state: \"scheduled\"\nmode: \"confirm\"\nat: \"2026-10-29T09:10:00-05:00\"\nvisibility: \"PUBLIC\"\n\
+             media:\n  - \"01.png\"\n  - \"02-missing.png\"\nurn: \"\"\nposted_at: \"\"\nnote: \"\"\n---\nCuerpo con 7 cifras\n",
+        )
+        .unwrap();
         std::fs::write(
             dir.join("un-draft.md"),
             "---\nid: \"un-draft\"\nhook: \"un hook discutible\"\nartifact: \"https://example.com/c/1\"\n\
@@ -499,9 +533,22 @@ mod tests {
         let screen = render(&cfg);
         assert!(screen.contains("queue"), "the list panel is titled");
         assert!(screen.contains("un-draft"), "the draft appears in the list");
-        assert!(screen.contains("un hook discutible"), "the hook is previewed");
+        // The scheduled post sorts first, so it is the one previewed.
+        assert!(screen.contains("un hook con imagenes"), "the selected hook is previewed");
         assert!(screen.contains("s send"), "the key hints are visible");
         assert!(screen.contains("FAIL") || screen.contains("warn") || screen.contains("artifact"));
+    }
+
+    #[test]
+    fn media_is_visible_in_the_queue_and_the_detail() {
+        let (cfg, _dir) = sandbox("media");
+        let screen = render(&cfg);
+        assert!(screen.contains("▣2"), "the list marks a post with two images: {screen}");
+        assert!(
+            screen.contains("02-missing.png"),
+            "the detail lists the filenames in order"
+        );
+        assert!(screen.contains("media"), "there is a media line");
     }
 
     #[test]
