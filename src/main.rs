@@ -407,6 +407,7 @@ fn run(cli: &Cli, ctx: &Ctx) -> Result<i32> {
                 ))));
             }
             post.state = "scheduled".into();
+            post.note.clear();
             post.at_raw = instant.to_rfc3339();
             post.at = Some(instant.with_timezone(&chrono::Utc));
             if let Some(mode) = mode {
