@@ -543,3 +543,24 @@ fn a_due_post_is_visible_without_a_notification() {
     assert_eq!(due["ok"], false);
     assert!(due["detail"].as_str().unwrap().contains("waiting"));
 }
+
+#[test]
+fn add_send_is_one_call_and_still_lints() {
+    let sandbox = Sandbox::new("add-send");
+    plant_credentials(&sandbox);
+
+    // A draft that fails the lint cannot be published by --send either.
+    let refused = sandbox.run(&[
+        "add", "--hook", "sin artefacto", "--artifact", "", "--body", "cuerpo sin cifras", "--send",
+    ]);
+    assert_eq!(code(&refused), 3, "{}", stdout(&refused));
+
+    // A clean one reaches the network — and offline it fails there, not earlier.
+    let clean = sandbox.run(&[
+        "add", "--hook", "con artefacto", "--artifact", "https://example.com/commit/abc123",
+        "--body", "cuerpo con 33 cifras y https://example.com/commit/abc123", "--send",
+    ]);
+    let text = format!("{}{}", stdout(&clean), String::from_utf8_lossy(&clean.stderr)).to_lowercase();
+    assert!(text.contains("offline"), "{text}");
+    clear_credentials(&sandbox);
+}

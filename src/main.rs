@@ -75,6 +75,9 @@ enum Cmd {
         body_file: Option<PathBuf>,
         #[arg(long)]
         id: Option<String>,
+        /// Publish immediately after creating it (one call: draft → send)
+        #[arg(long)]
+        send: bool,
     },
     /// List the queue
     List {
@@ -229,6 +232,7 @@ fn run(cli: &Cli, ctx: &Ctx) -> Result<i32> {
             body,
             body_file,
             id,
+            send,
         } => {
             let cfg = load(cli)?;
             let queue = Queue::open(&cfg.queue)?;
@@ -252,6 +256,32 @@ fn run(cli: &Cli, ctx: &Ctx) -> Result<i32> {
             post.path = queue.dir.join(format!("{id}.md"));
             post.state = "draft".into();
             queue.save(&post)?;
+            if *send {
+                // `--send` is the agent's one-call path: create, lint, publish.
+                // The lint still refuses (exit 3) and nothing is sent.
+                let report = publish::execute(&cfg, &queue, &post.id, false, false)?;
+                let code = match report.state_after.as_str() {
+                    "posted" => EXIT_OK,
+                    "failed" => EXIT_ERROR,
+                    "unknown" => EXIT_PARTIAL,
+                    _ => EXIT_OK,
+                };
+                ctx.emit(
+                    serde_json::json!({
+                        "ok": report.state_after == "posted",
+                        "id": report.id,
+                        "state_after": report.state_after,
+                        "url": report.url,
+                        "chars": report.chars,
+                        "message": report.message,
+                    }),
+                    || match report.state_after.as_str() {
+                        "posted" => println!("published {} ({}) {}", report.id, report.chars, report.url),
+                        other => println!("{}: {} {}", other, report.id, report.message),
+                    },
+                );
+                return Ok(code);
+            }
             let issues = check::run(&post, &queue.dir);
             ctx.emit(
                 serde_json::json!({
