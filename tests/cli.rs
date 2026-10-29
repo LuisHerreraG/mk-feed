@@ -263,3 +263,21 @@ fn marking_a_manual_post_closes_the_loop() {
     let again = sandbox.run(&["mark", "pasted"]);
     assert_eq!(code(&again), 3);
 }
+
+#[test]
+fn a_publish_that_cannot_start_leaves_the_post_where_it_was() {
+    let sandbox = Sandbox::new("arm-last");
+    sandbox.write_post("no-creds", "", "cuerpo 5");
+    sandbox.run(&["schedule", "no-creds", "--at", "+1h"]);
+
+    // No tokens in the Keychain for this sandbox: the send fails before the POST.
+    let out = sandbox.run(&["send", "no-creds"]);
+    assert_eq!(code(&out), 1, "a missing token is an error, not a refusal");
+
+    let after = sandbox.read_post("no-creds");
+    assert!(
+        after.contains("state: \"scheduled\""),
+        "a send that never reached the network must not strand the post:\n{after}"
+    );
+    assert!(!after.contains("attempting"), "{after}");
+}

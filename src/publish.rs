@@ -105,15 +105,23 @@ pub fn execute(cfg: &Config, queue: &Queue, id: &str, force: bool, dry_run: bool
         ))));
     }
 
-    let prior_state = post.state.clone();
-    post.state = "attempting".into();
-    post.note = format!("attempt at {}", chrono::Local::now().to_rfc3339());
-    queue.save(&post)?;
-
+    // Obtain everything that can fail *before* arming: a missing token or a
+    // broken TLS stack must leave the post exactly where it was, not stranded
+    // in `attempting` where it would look like a publish of unknown outcome.
+    // Arm last: the only window left is between the write and the POST, and
+    // boot reconcile owns that one.
     let token = auth::access_token(cfg)?;
     let meta = auth::load_meta();
     let author = format!("urn:li:person:{}", meta.sub);
     let client = api::http()?;
+
+    let prior_state = post.state.clone();
+    post.state = "attempting".into();
+    post.note = format!("attempt at {}", chrono::Local::now().to_rfc3339());
+    queue.save(&post)?;
+    // Every arm leaves a trace: when a post ends up stranded, the log says who
+    // armed it and when, instead of leaving the file as the only witness.
+    log_line(cfg, &post, "attempting", "", "")?;
 
     let mut outcome = api::create_post(
         &client,
