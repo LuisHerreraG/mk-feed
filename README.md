@@ -4,8 +4,8 @@ Plan, schedule and publish posts from the terminal. LinkedIn today.
 **Files are the queue**, the Keychain holds the token, and nothing is ever
 published twice.
 
-Built because Postiz is a GUI over seven services and this needs to be a TUI
-over none. The LinkedIn transport is a reimplementation of what
+Built because self-hosted Postiz is a GUI over nine compose services (postgres,
+redis, temporal and its elasticsearch) and this needs to be a TUI over none. The LinkedIn transport is a reimplementation of what
 [Postiz](https://github.com/gitroomhq/postiz-app) taught about its API
 (`postiz-app@64f00fd6`, AGPL — read, not vendored).
 
