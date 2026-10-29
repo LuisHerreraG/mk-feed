@@ -494,3 +494,33 @@ fn a_posted_post_cannot_be_sent_again() {
     assert_eq!(code(&out), 3, "posted means done: {}", stdout(&out));
     assert!(sandbox.read_post("already-out").contains("state: \"posted\""));
 }
+
+#[test]
+fn a_due_post_is_visible_without_a_notification() {
+    let sandbox = Sandbox::new("due");
+    sandbox.write_post("waiting", "", "cuerpo 2");
+    let path = sandbox.drafts().join("waiting.md");
+    let raw = std::fs::read_to_string(&path)
+        .unwrap()
+        .replace("state: \"ready\"", "state: \"scheduled\"")
+        .replace("at: \"\"", "at: \"2020-01-01T09:00:00-05:00\"");
+    std::fs::write(&path, raw).unwrap();
+
+    // The OS may swallow a notification; these two surfaces cannot.
+    let list = sandbox.run(&["list"]);
+    let text = stdout(&list);
+    assert!(text.contains("waiting*"), "the row is marked due: {text}");
+    assert!(text.contains("due since"), "and the list says so: {text}");
+
+    let doctor = sandbox.run(&["doctor", "--json"]);
+    let json: serde_json::Value = serde_json::from_str(&stdout(&doctor)).unwrap();
+    let due = json["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["check"] == "due")
+        .cloned()
+        .unwrap();
+    assert_eq!(due["ok"], false);
+    assert!(due["detail"].as_str().unwrap().contains("waiting"));
+}

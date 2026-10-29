@@ -301,13 +301,27 @@ fn run(cli: &Cli, ctx: &Ctx) -> Result<i32> {
                         println!("(empty queue at {})", queue.dir.display());
                         return;
                     }
+                    let due: Vec<&state::Post> =
+                        posts.iter().filter(|p| state::is_due(p)).collect();
                     for post in &posts {
+                        let state = if state::is_due(post) {
+                            format!("{}*", post.state)
+                        } else {
+                            post.state.clone()
+                        };
                         println!(
                             "{:<10} {:<34} {:<16} {}",
-                            post.state,
+                            state,
                             truncate(&post.id, 34),
                             when(post),
                             truncate(&post.hook, 48)
+                        );
+                    }
+                    if !due.is_empty() {
+                        println!(
+                            "\n{} due since {} — `mk-feed tui` then s, or `mk-feed send <id>`",
+                            due.len(),
+                            due.first().map(|p| when(p)).unwrap_or_default()
                         );
                     }
                 },
@@ -644,6 +658,25 @@ fn doctor(cli: &Cli, ctx: &Ctx, online: bool) -> Result<i32> {
             cfg.style_path().display().to_string(),
         );
         push("redirect", true, cfg.redirect_uri());
+        let queue = Queue::open(&cfg.queue).ok();
+        let due: Vec<String> = queue
+            .as_ref()
+            .and_then(|q| q.list().ok())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(state::is_due)
+            .map(|p| format!("{} (due {})", p.id, when(&p)))
+            .collect();
+        push(
+            "due",
+            due.is_empty(),
+            if due.is_empty() {
+                "nothing waiting for a keypress".to_string()
+            } else {
+                format!("waiting for you: {}", due.join(", "))
+            },
+        );
+
         let budget = publish::posted_today(cfg);
         push(
             "daily_budget",

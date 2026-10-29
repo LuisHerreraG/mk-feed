@@ -344,12 +344,13 @@ impl<'a> App<'a> {
                         .to_string(),
                     None => String::new(),
                 };
+                let mark = if crate::state::is_due(post) { "!" } else { " " };
                 let media = if post.media.is_empty() {
                     "   ".to_string()
                 } else {
                     format!("▣{} ", post.media.len())
                 };
-                let line = format!("{:<10}{}{:<10} {}", post.state, media, when, post.id);
+                let line = format!("{}{:<10}{}{:<10} {}", mark, post.state, media, when, post.id);
                 let style = match post.state.as_str() {
                     "posted" => Style::default().fg(Color::Green),
                     "failed" => Style::default().fg(Color::Red),

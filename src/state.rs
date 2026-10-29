@@ -227,6 +227,18 @@ pub fn parse_instant(text: &str) -> Result<DateTime<chrono::FixedOffset>> {
     anyhow::bail!("could not parse time {text:?} (try \"2026-11-02 09:10\" or \"+2h\")")
 }
 
+/// Due = scheduled and its moment has passed. The daemon notifies on due, but a
+/// `confirm` post waits for a human — so every surface that lists posts must be
+/// able to say "this one is waiting for you", not just a notification that the
+/// OS may never show.
+pub fn is_due(post: &Post) -> bool {
+    post.state == "scheduled"
+        && post
+            .at
+            .map(|at| at <= chrono::Utc::now())
+            .unwrap_or(false)
+}
+
 pub fn slugify(text: &str) -> String {
     let mut out = String::new();
     let mut dash = false;
