@@ -56,6 +56,10 @@ enum Cmd {
         /// Delete the stored tokens and exit (before re-authorizing)
         #[arg(long)]
         forget: bool,
+        /// Read the client secret from stdin and store it in the Keychain
+        /// (`pbpaste | mk-feed auth --store-secret`)
+        #[arg(long)]
+        store_secret: bool,
         #[arg(long, default_value_t = 300)]
         timeout: u64,
     },
@@ -180,8 +184,28 @@ fn run(cli: &Cli, ctx: &Ctx) -> Result<i32> {
             url,
             no_open,
             forget,
+            store_secret,
             timeout,
         } => {
+            if *store_secret {
+                let mut raw = String::new();
+                std::io::stdin().read_to_string(&mut raw)?;
+                let secret = raw.trim().to_string();
+                if secret.is_empty() {
+                    return Err(anyhow::Error::new(publish::Refusal(
+                        "nothing on stdin — copy the secret in the portal, then:
+                           pbpaste | mk-feed auth --store-secret"
+                            .into(),
+                    )));
+                }
+                keychain::set(keychain::ACC_SECRET, &secret)?;
+                // Never echo it: the length is all the confirmation anyone needs.
+                ctx.emit(
+                    serde_json::json!({"ok": true, "stored": "linkedin.client_secret", "chars": secret.chars().count()}),
+                    || println!("client secret stored in the Keychain ({} chars)", secret.chars().count()),
+                );
+                return Ok(EXIT_OK);
+            }
             if *forget {
                 keychain::forget(keychain::ACC_TOKEN)?;
                 keychain::forget(keychain::ACC_REFRESH)?;

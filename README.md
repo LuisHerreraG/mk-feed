@@ -79,9 +79,10 @@ Then the one-time LinkedIn setup (all free, no app review):
 3. **Auth** tab → redirect URL `http://127.0.0.1:8787/callback` (must match
    `redirect_port`). If LinkedIn refuses a loopback URL, register any https URL
    and use `mk-feed auth --url '<pasted redirect URL>'`.
-4. `client_id` into the config; the secret into the Keychain:
+4. `client_id` into the config; the secret into the Keychain — copied from the
+   portal, never typed on a command line:
    ```bash
-   security add-generic-password -U -a linkedin.client_secret -s mk-feed -w '<secret>'
+   pbpaste | mk-feed auth --store-secret
    ```
 5. `mk-feed auth` → `mk-feed doctor --online`.
 
