@@ -36,6 +36,13 @@ pub fn http() -> Result<reqwest::blocking::Client> {
         .build()?)
 }
 
+/// Tests and dry runs must never reach the network. This is a hard gate, not a
+/// convention: a sandboxed config with a live Keychain is exactly how a test
+/// published to a real account once.
+fn offline() -> bool {
+    std::env::var_os("MK_FEED_OFFLINE").is_some()
+}
+
 pub fn create_post(
     client: &reqwest::blocking::Client,
     access_token: &str,
@@ -44,6 +51,15 @@ pub fn create_post(
     visibility: &str,
     api_version: &str,
 ) -> Result<String, (SendError, bool)> {
+    if offline() {
+        return Err((
+            SendError::Rejected(
+                "MK_FEED_OFFLINE is set: network disabled, nothing was sent".into(),
+            ),
+            false,
+        ));
+    }
+
     // The bool is "auth may be stale" — a 401 means refresh and retry once,
     // which is safe because a 401 never published anything.
     let payload = json!({

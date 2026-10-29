@@ -9,7 +9,12 @@
 use anyhow::{bail, Result};
 use std::process::Command;
 
-const SERVICE: &str = "mk-feed";
+/// `MK_FEED_KEYCHAIN_SERVICE` exists so tests can point at a throwaway service
+/// instead of the real one — a sandboxed config with a live Keychain is how a
+/// test published to a real account on 2026-10-28.
+fn service() -> String {
+    std::env::var("MK_FEED_KEYCHAIN_SERVICE").unwrap_or_else(|_| "mk-feed".to_string())
+}
 
 fn run(args: &[&str]) -> Result<(bool, String)> {
     let out = Command::new("/usr/bin/security").args(args).output()?;
@@ -18,13 +23,14 @@ fn run(args: &[&str]) -> Result<(bool, String)> {
 }
 
 pub fn set(account: &str, secret: &str) -> Result<()> {
+    let service = service();
     let (ok, err) = run(&[
         "add-generic-password",
         "-U",
         "-a",
         account,
         "-s",
-        SERVICE,
+        &service,
         "-w",
         secret,
     ])?;
@@ -35,7 +41,8 @@ pub fn set(account: &str, secret: &str) -> Result<()> {
 }
 
 pub fn get(account: &str) -> Option<String> {
-    match run(&["find-generic-password", "-a", account, "-s", SERVICE, "-w"]) {
+    let service = service();
+    match run(&["find-generic-password", "-a", account, "-s", &service, "-w"]) {
         Ok((true, value)) if !value.is_empty() => Some(value),
         _ => None,
     }
@@ -46,7 +53,8 @@ pub fn has(account: &str) -> bool {
 }
 
 pub fn forget(account: &str) -> Result<()> {
-    let _ = run(&["delete-generic-password", "-a", account, "-s", SERVICE])?;
+    let service = service();
+    let _ = run(&["delete-generic-password", "-a", account, "-s", &service])?;
     Ok(())
 }
 

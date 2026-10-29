@@ -11,6 +11,7 @@ const BIN: &str = env!("CARGO_BIN_EXE_mk-feed");
 struct Sandbox {
     dir: PathBuf,
     config: PathBuf,
+    service: String,
 }
 
 impl Sandbox {
@@ -46,7 +47,15 @@ impl Sandbox {
             ),
         )
         .unwrap();
-        Self { dir, config }
+        Self {
+            service: format!("mk-feed-test-{name}-{}", std::process::id()),
+            dir,
+            config,
+        }
+    }
+
+    fn service(&self) -> String {
+        self.service.clone()
     }
 
     fn run(&self, args: &[&str]) -> Output {
@@ -54,6 +63,11 @@ impl Sandbox {
             .arg("--config")
             .arg(&self.config)
             .args(args)
+            // A sandboxed config is not enough: the Keychain is global, so a
+            // real token would make a test publish to a real account (it did,
+            // 2026-10-28). Both guards are mandatory.
+            .env("MK_FEED_KEYCHAIN_SERVICE", &self.service)
+            .env("MK_FEED_OFFLINE", "1")
             .output()
             .expect("mk-feed runs")
     }
@@ -280,4 +294,55 @@ fn a_publish_that_cannot_start_leaves_the_post_where_it_was() {
         "a send that never reached the network must not strand the post:\n{after}"
     );
     assert!(!after.contains("attempting"), "{after}");
+}
+
+#[test]
+fn the_network_is_gated_even_with_a_valid_looking_token() {
+    let sandbox = Sandbox::new("offline-gate");
+    sandbox.write_post("gated", "", "cuerpo 3");
+
+    // A token that looks real, in the sandbox's own Keychain service.
+    let future = "2099-01-01T00:00:00+00:00";
+    for (account, value) in [
+        ("linkedin.access_token", "fake-access-token".to_string()),
+        (
+            "linkedin.meta",
+            format!(
+                "{{\"sub\":\"abc\",\"name\":\"test\",\"scope\":\"w_member_social\",\"obtained_at\":\"\",\"expires_at\":\"{future}\",\"refresh_expires_at\":\"\"}}"
+            ),
+        ),
+    ] {
+        std::process::Command::new("/usr/bin/security")
+            .args([
+                "add-generic-password",
+                "-U",
+                "-a",
+                account,
+                "-s",
+                &sandbox.service,
+                "-w",
+                &value,
+            ])
+            .output()
+            .unwrap();
+    }
+
+    let out = sandbox.run(&["send", "gated"]);
+    for account in ["linkedin.access_token", "linkedin.meta"] {
+        let _ = std::process::Command::new("/usr/bin/security")
+            .args([
+                "delete-generic-password",
+                "-a",
+                account,
+                "-s",
+                &sandbox.service,
+            ])
+            .output();
+    }
+
+    let text = format!("{}{}", stdout(&out), String::from_utf8_lossy(&out.stderr));
+    assert!(
+        text.contains("offline") || text.contains("network disabled"),
+        "MK_FEED_OFFLINE must stop the request before it leaves: {text}"
+    );
 }
