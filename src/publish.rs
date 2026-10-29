@@ -210,6 +210,14 @@ pub fn compose_commentary(post: &Post) -> String {
     }
 }
 
+/// The paste path's closing move: the same log and index a real publish writes,
+/// so the record does not care how the bytes reached LinkedIn.
+pub fn record_manual(cfg: &Config, post: &Post) -> Result<()> {
+    log_line(cfg, post, "posted-manual", "", "")?;
+    append_index(cfg, post)?;
+    Ok(())
+}
+
 fn log_line(cfg: &Config, post: &Post, event: &str, url: &str, error: &str) -> Result<()> {
     std::fs::create_dir_all(&cfg.state_dir)?;
     let line = serde_json::json!({

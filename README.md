@@ -102,6 +102,7 @@ mk-feed check <id>                      0 clean · 3 fail · 4 warnings
 mk-feed schedule <id> --at "2026-11-02 09:10" [--mode auto|confirm]
 mk-feed send <id> [--dry-run] [--force]
 mk-feed cancel <id>
+mk-feed mark <id> [--url <url>]        the paste path: record a manual publish
 mk-feed log [--tail N]
 mk-feed tui
 mk-feed daemon [--once] [--interval 60]
@@ -135,6 +136,21 @@ src/tui.rs      ratatui
 `STYLE.md` beside the drafts is normative — `mk-feed style` prints it,
 `check` enforces it. The skill that drives this tool carries no paths, so it
 works from any cwd.
+
+## The paste path (no LinkedIn app)
+
+There is no personal-profile-only developer app: LinkedIn requires every app to
+be registered against a **Page**, and the Page is the app's permanent publisher.
+If that is a price you do not want to pay, the tool still works:
+
+```bash
+mk-feed tui          # y copies the exact text, you paste it into LinkedIn
+mk-feed mark <id> --url <post-url>   # closes the loop: state, log, PUBLISHED.md
+```
+
+`mark` writes the same log entry and the same index row a real publish does, so
+the record does not care how the bytes arrived. What you lose is the click, not
+the bookkeeping.
 
 ## Not here yet
 

@@ -106,6 +106,13 @@ enum Cmd {
     },
     /// Take a post out of the calendar
     Cancel { id: String },
+    /// Record that a post was published by hand (paste path): closes the loop
+    Mark {
+        id: String,
+        /// The post URL, if you have it
+        #[arg(long)]
+        url: Option<String>,
+    },
     /// Publish log
     Log {
         #[arg(long, default_value_t = 20)]
@@ -451,6 +458,35 @@ fn run(cli: &Cli, ctx: &Ctx) -> Result<i32> {
             ctx.emit(
                 serde_json::json!({"ok": true, "id": post.id, "state": post.state}),
                 || println!("{} cancelled", post.id),
+            );
+            Ok(EXIT_OK)
+        }
+
+        Cmd::Mark { id, url } => {
+            let cfg = load(cli)?;
+            let queue = Queue::open(&cfg.queue)?;
+            let guard = queue.lock()?;
+            let mut post = queue.get(id)?;
+            if post.state == "posted" {
+                drop(guard);
+                return Err(anyhow::Error::new(publish::Refusal(format!(
+                    "{} is already recorded as posted",
+                    post.id
+                ))));
+            }
+            post.state = "posted".into();
+            post.urn.clear();
+            post.posted_at = chrono::Local::now().to_rfc3339();
+            post.note = match url {
+                Some(url) => format!("published by hand: {url}"),
+                None => "published by hand (no URL recorded)".into(),
+            };
+            queue.save(&post)?;
+            drop(guard);
+            publish::record_manual(&cfg, &post)?;
+            ctx.emit(
+                serde_json::json!({"ok": true, "id": post.id, "state": post.state, "note": post.note}),
+                || println!("{} recorded as posted — {}", post.id, post.note),
             );
             Ok(EXIT_OK)
         }

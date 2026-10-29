@@ -242,3 +242,24 @@ fn doctor_fails_when_the_linkedin_app_is_missing() {
 fn exists(path: &Path) -> bool {
     path.exists()
 }
+
+#[test]
+fn marking_a_manual_post_closes_the_loop() {
+    let sandbox = Sandbox::new("mark");
+    sandbox.write_post("pasted", "", "cuerpo 9");
+    sandbox.run(&["schedule", "pasted", "--at", "+1h"]);
+
+    let out = sandbox.run(&["mark", "pasted", "--url", "https://www.linkedin.com/feed/"]);
+    assert_eq!(code(&out), 0, "{}", stdout(&out));
+
+    let after = sandbox.read_post("pasted");
+    assert!(after.contains("state: \"posted\""), "{after}");
+    assert!(after.contains("published by hand"), "{after}");
+
+    let log = std::fs::read_to_string(sandbox.dir.join("state/publish.jsonl")).unwrap();
+    assert!(log.contains("posted-manual"), "{log}");
+
+    // Marking twice is a refusal, not a second publish.
+    let again = sandbox.run(&["mark", "pasted"]);
+    assert_eq!(code(&again), 3);
+}
