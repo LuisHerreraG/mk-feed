@@ -667,17 +667,45 @@ fn doctor(cli: &Cli, ctx: &Ctx, online: bool) -> Result<i32> {
                 None => "unknown expiry — run `mk-feed auth`".into(),
             },
         );
+        // A missing refresh token is not a failure — the self-serve tier does
+        // not issue one. What matters is the deadline it implies: the access
+        // token is the only credential, and it dies in 60 days.
         let refresh_at = chrono::DateTime::parse_from_rfc3339(&meta.refresh_expires_at)
             .map(|d| d.with_timezone(&chrono::Local))
             .ok();
-        push(
-            "refresh_token",
-            keychain::has(keychain::ACC_REFRESH),
-            match refresh_at {
-                Some(at) => format!("re-auth needed by {}", at.format("%Y-%m-%d")),
-                None => "missing — run `mk-feed auth`".into(),
-            },
-        );
+        if keychain::has(keychain::ACC_REFRESH) {
+            push(
+                "refresh_token",
+                true,
+                match refresh_at {
+                    Some(at) => format!("rotates on use; re-auth needed by {}", at.format("%Y-%m-%d")),
+                    None => "present".into(),
+                },
+            );
+        } else {
+            push(
+                "refresh_token",
+                true,
+                match expires {
+                    Some(at) => format!(
+                        "none issued at this app tier — access token is the only credential, re-auth by {}",
+                        at.format("%Y-%m-%d")
+                    ),
+                    None => "none issued at this app tier".into(),
+                },
+            );
+        }
+
+        let days_left = expires.map(|at| (at - chrono::Local::now()).num_days());
+        match days_left {
+            Some(days) if days <= 7 => push(
+                "reauth",
+                false,
+                format!("{days} day(s) left on the access token — run `mk-feed auth`"),
+            ),
+            Some(days) => push("reauth", true, format!("{days} days left on the access token")),
+            None => push("reauth", false, "no token — run `mk-feed auth`".into()),
+        }
         push(
             "author",
             !meta.sub.is_empty(),

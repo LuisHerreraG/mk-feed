@@ -86,8 +86,12 @@ Then the one-time LinkedIn setup (all free, no app review):
    ```
 5. `mk-feed auth` → `mk-feed doctor --online`.
 
-Tokens: access **60 days**, refresh **365 days** and it rotates on every use
-without extending → one `mk-feed auth` per year.
+**Tokens, measured 2026-10-28:** the self-serve tier issues an access token valid
+for **60 days** and **no refresh token** — programmatic refresh is a Marketing
+Developer Platform feature. So the access token is the only credential: `doctor`
+counts down the days and fails a week out, and re-authorizing is one
+`mk-feed auth` every two months. The code still handles a refresh token if the
+app ever gets one.
 
 ## Verbs
 

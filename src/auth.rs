@@ -224,7 +224,9 @@ pub fn exchange_code(cfg: &Config, code: &str) -> Result<TokenResponse> {
 pub fn refresh(cfg: &Config) -> Result<TokenResponse> {
     let secret = client_secret()?;
     let refresh_token =
-        keychain::get(keychain::ACC_REFRESH).context("no refresh token — run `mk-feed auth`")?;
+        keychain::get(keychain::ACC_REFRESH).context(
+            "this app has no refresh token (the self-serve tier issues none) — run `mk-feed auth`",
+        )?;
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()?;
@@ -251,8 +253,19 @@ pub fn refresh(cfg: &Config) -> Result<TokenResponse> {
 pub fn store_tokens(cfg: &Config, tokens: &TokenResponse) -> Result<Meta> {
     let now = chrono::Utc::now();
     let expires_at = now + chrono::Duration::seconds(tokens.expires_in.max(3600));
-    let refresh_expires_at = now
-        + chrono::Duration::seconds(tokens.refresh_token_expires_in.unwrap_or(365 * 24 * 3600));
+    // Measured 2026-10-28: the self-serve tier ("Share on LinkedIn") issues NO
+    // refresh token — programmatic refresh is a Marketing Developer Platform
+    // feature. Recording a date for a token that does not exist would make
+    // `doctor` lie about the deadline, so an absent token records nothing.
+    let refresh_expires_at = match tokens.refresh_token {
+        Some(_) => {
+            let seconds = tokens
+                .refresh_token_expires_in
+                .unwrap_or(365 * 24 * 3600);
+            (now + chrono::Duration::seconds(seconds)).to_rfc3339()
+        }
+        None => String::new(),
+    };
 
     keychain::set(keychain::ACC_TOKEN, &tokens.access_token)?;
     if let Some(refresh) = &tokens.refresh_token {
@@ -265,7 +278,7 @@ pub fn store_tokens(cfg: &Config, tokens: &TokenResponse) -> Result<Meta> {
     meta.scope = tokens.scope.clone().unwrap_or_else(|| SCOPES.to_string());
     meta.obtained_at = now.to_rfc3339();
     meta.expires_at = expires_at.to_rfc3339();
-    meta.refresh_expires_at = refresh_expires_at.to_rfc3339();
+    meta.refresh_expires_at = refresh_expires_at;
     if meta.sub.is_empty() {
         if let Ok((sub, name)) = userinfo(&tokens.access_token) {
             meta.sub = sub;
