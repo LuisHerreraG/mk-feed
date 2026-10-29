@@ -75,8 +75,6 @@ enum Cmd {
         body_file: Option<PathBuf>,
         #[arg(long)]
         id: Option<String>,
-        #[arg(long)]
-        mode: Option<String>,
     },
     /// List the queue
     List {
@@ -90,15 +88,19 @@ enum Cmd {
     Style,
     /// Lint a draft against the house format (0 clean, 3 fail, 4 warnings)
     Check { id: String },
+    /// Approve a draft: runs the lint and makes it schedulable
+    Approve {
+        id: String,
+        /// Approve even if the lint fails
+        #[arg(long)]
+        force: bool,
+    },
     /// Put a post in the calendar
     Schedule {
         id: String,
         /// "2026-11-02 09:10", RFC3339, or "+2h"
         #[arg(long)]
         at: String,
-        /// auto | confirm (default: config default_mode)
-        #[arg(long)]
-        mode: Option<String>,
     },
     /// Publish now
     Send {
@@ -227,7 +229,6 @@ fn run(cli: &Cli, ctx: &Ctx) -> Result<i32> {
             body,
             body_file,
             id,
-            mode,
         } => {
             let cfg = load(cli)?;
             let queue = Queue::open(&cfg.queue)?;
@@ -245,10 +246,11 @@ fn run(cli: &Cli, ctx: &Ctx) -> Result<i32> {
                     "{id} already exists in the queue"
                 ))));
             }
-            let mode = mode.clone().unwrap_or_else(|| cfg.default_mode.clone());
-            let mut post = Post::new(&id, hook, artifact, &text, &mode);
+            // Everything starts as a draft: approval is an explicit act, so an
+            // agent can write but cannot promote its own text into the calendar.
+            let mut post = Post::new(&id, hook, artifact, &text);
             post.path = queue.dir.join(format!("{id}.md"));
-            post.state = if text.trim().is_empty() { "draft" } else { "ready" }.into();
+            post.state = "draft".into();
             queue.save(&post)?;
             let issues = check::run(&post, &queue.dir);
             ctx.emit(
@@ -288,7 +290,6 @@ fn run(cli: &Cli, ctx: &Ctx) -> Result<i32> {
                     "posts": posts.iter().map(|p| serde_json::json!({
                         "id": p.id,
                         "state": p.state,
-                        "mode": p.mode,
                         "at": p.at_raw,
                         "hook": p.hook,
                         "artifact": p.artifact,
@@ -339,7 +340,6 @@ fn run(cli: &Cli, ctx: &Ctx) -> Result<i32> {
                     "ok": true,
                     "id": post.id,
                     "state": post.state,
-                    "mode": post.mode,
                     "at": post.at_raw,
                     "visibility": post.visibility,
                     "hook": post.hook,
@@ -359,7 +359,7 @@ fn run(cli: &Cli, ctx: &Ctx) -> Result<i32> {
                 }),
                 || {
                     println!("id         {}", post.id);
-                    println!("state      {}  mode {}", post.state, post.mode);
+                    println!("state      {}", post.state);
                     println!("when       {}", when(&post));
                     println!("artifact   {}", post.artifact);
                     println!("chars      {}", post.body_chars());
@@ -437,7 +437,18 @@ fn run(cli: &Cli, ctx: &Ctx) -> Result<i32> {
             })
         }
 
-        Cmd::Schedule { id, at, mode } => {
+        Cmd::Approve { id, force } => {
+            let cfg = load(cli)?;
+            let queue = Queue::open(&cfg.queue)?;
+            publish::approve(&queue, id, *force)?;
+            ctx.emit(
+                serde_json::json!({"ok": true, "id": id, "state": "ready"}),
+                || println!("{id} approved — `mk-feed schedule {id} --at \"…\"` puts it in the calendar"),
+            );
+            Ok(EXIT_OK)
+        }
+
+        Cmd::Schedule { id, at } => {
             let cfg = load(cli)?;
             let queue = Queue::open(&cfg.queue)?;
             let mut post = queue.get(id)?;
@@ -445,6 +456,12 @@ fn run(cli: &Cli, ctx: &Ctx) -> Result<i32> {
                 return Err(anyhow::Error::new(publish::Refusal(format!(
                     "{} is {} — cannot schedule it",
                     post.id, post.state
+                ))));
+            }
+            if post.state == "draft" {
+                return Err(anyhow::Error::new(publish::Refusal(format!(
+                    "{} is not approved yet — `mk-feed approve {}` (or press a in the TUI) first",
+                    post.id, post.id
                 ))));
             }
             let instant = state::parse_instant(at)?;
@@ -457,23 +474,18 @@ fn run(cli: &Cli, ctx: &Ctx) -> Result<i32> {
             post.note.clear();
             post.at_raw = instant.to_rfc3339();
             post.at = Some(instant.with_timezone(&chrono::Utc));
-            if let Some(mode) = mode {
-                post.mode = mode.clone();
-            }
             queue.save(&post)?;
             ctx.emit(
                 serde_json::json!({
                     "ok": true,
                     "id": post.id,
                     "at": post.at_raw,
-                    "mode": post.mode,
                 }),
                 || {
                     println!(
-                        "{} scheduled for {} ({})",
+                        "{} scheduled for {} — the daemon publishes it then",
                         post.id,
-                        instant.format("%Y-%m-%d %H:%M %z"),
-                        post.mode
+                        instant.format("%Y-%m-%d %H:%M %z")
                     )
                 },
             );
@@ -686,11 +698,6 @@ fn doctor(cli: &Cli, ctx: &Ctx, online: bool) -> Result<i32> {
             } else {
                 format!("{budget}/{} posted today", cfg.max_posts_per_day)
             },
-        );
-        push(
-            "default_mode",
-            matches!(cfg.default_mode.as_str(), "auto" | "confirm"),
-            cfg.default_mode.clone(),
         );
 
         let stale = chrono::NaiveDate::parse_from_str(&cfg.api_version_stale_after, "%Y-%m-%d")

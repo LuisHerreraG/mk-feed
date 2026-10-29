@@ -53,18 +53,33 @@ The design follows from that:
 `daemon` reconciles on boot: anything caught in `attempting` becomes `unknown`.
 That is the whole restart story, and `tests/cli.rs` proves it.
 
-## Modes
+## Approval, then timing — two separate questions
 
-`confirm` is the default and `auto` must be asked for — per post
-(`schedule --mode auto`), from the TUI with `m`, or per config (`default_mode`).
-`confirm` means the daemon **notifies and waits**: it never publishes by itself,
-and a due post shows up as `scheduled*` in `list`, fails the `due` check in
-`doctor`, and carries a `!` in the TUI until someone presses `s`. A missed post costs a
-slot; an unattended bad post costs credibility with the exact audience this
-feed exists for.
+Earlier versions had a `confirm`/`auto` mode, which conflated *"is this worth
+publishing"* with *"when does it go out"*: a `confirm` post would sit due at its
+scheduled time, waiting, and the reminder was a notification the OS could swallow.
+That is incoherent, and it is gone.
 
-**Flip criterion** (not a vibe): after **10 published posts with zero `unknown`,
-zero `failed`, and zero edits after `schedule`**, set `default_mode = "auto"`.
+The gate now lives where it belongs — **in the state**:
+
+| state | meaning |
+|---|---|
+| `draft` | written, **not approved**; cannot be scheduled |
+| `ready` | approved (the lint ran); schedulable |
+| `scheduled` | approved + a moment. **The daemon publishes it then.** |
+| `attempting` / `posted` / `failed` / `unknown` | the publish itself |
+
+- `mk-feed add` always creates a `draft` — an agent can write, but it cannot
+  promote its own text into the calendar.
+- `mk-feed approve <id>` (or `a` in the TUI) runs `check`; a failing draft is
+  refused (exit 3) unless `--force`.
+- `mk-feed schedule <id> --at "…"` requires `ready` and means what it says: at
+  that time it goes out, whether or not a human is at the keyboard.
+- `mk-feed send <id>` publishes immediately — that act *is* the approval.
+
+Safety is unchanged and independent of approval: arm-last state, `unknown` never
+retried, one `flock`, and **at most 3 live posts per day** (`max_posts_per_day`,
+counted from the log; a post taken down spends no budget).
 
 ## Install
 

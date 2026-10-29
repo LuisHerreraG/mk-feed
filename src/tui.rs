@@ -33,7 +33,7 @@ enum Intent {
     Send { force: bool },
     Check,
     Schedule(String),
-    ToggleMode,
+    Approve,
     Cancel,
     Edit,
     Copy,
@@ -161,7 +161,7 @@ impl<'a> App<'a> {
             KeyCode::Char('c') => return Intent::Check,
             KeyCode::Char('s') => return Intent::Send { force: false },
             KeyCode::Char('S') => return Intent::Send { force: true },
-            KeyCode::Char('m') => return Intent::ToggleMode,
+            KeyCode::Char('a') => return Intent::Approve,
             KeyCode::Char('t') => {
                 self.input = Some(Input {
                     prompt: "when? (2026-11-02 09:10 / +2h) — Enter to schedule".into(),
@@ -239,10 +239,9 @@ impl<'a> App<'a> {
                         self.queue.save(&fresh)?;
                         self.set(
                             format!(
-                                "{} scheduled {} ({})",
+                                "{} scheduled {} — it publishes itself then",
                                 post.id,
-                                instant.format("%Y-%m-%d %H:%M"),
-                                fresh.mode
+                                instant.format("%Y-%m-%d %H:%M")
                             ),
                             Tone::Info,
                         );
@@ -251,20 +250,13 @@ impl<'a> App<'a> {
                     Err(err) => self.set(format!("{err:#}"), Tone::Error),
                 }
             }
-            Intent::ToggleMode => {
-                match self.toggle_mode(&post.id) {
-                    Ok(mode) => {
-                        let note = if mode == "auto" {
-                            "auto: it publishes itself at its time"
-                        } else {
-                            "confirm: it waits for s"
-                        };
-                        self.set(format!("{} — mode {}", post.id, note), Tone::Info);
-                        self.reload()?;
-                    }
-                    Err(err) => self.set(format!("{err:#}"), Tone::Error),
+            Intent::Approve => match publish::approve(&self.queue, &post.id, false) {
+                Ok(()) => {
+                    self.set(format!("{} approved — t to schedule, s to send", post.id), Tone::Info);
+                    self.reload()?;
                 }
-            }
+                Err(err) => self.set(format!("{err:#}"), Tone::Error),
+            },
             Intent::Cancel => {
                 let mut fresh = self.queue.get(&post.id)?;
                 if fresh.state == "posted" {
@@ -323,22 +315,6 @@ impl<'a> App<'a> {
             }
         }
         Ok(())
-    }
-
-    /// `confirm` → `auto` → `confirm`. The only place a post becomes hands-off,
-    /// so it gets a key of its own and says what it did.
-    fn toggle_mode(&mut self, id: &str) -> Result<String> {
-        let mut post = self.queue.get(id)?;
-        if matches!(post.state.as_str(), "posted" | "cancelled") {
-            anyhow::bail!("{} is {} — its mode no longer matters", post.id, post.state);
-        }
-        post.mode = if post.mode == "auto" {
-            "confirm".into()
-        } else {
-            "auto".into()
-        };
-        self.queue.save(&post)?;
-        Ok(post.mode)
     }
 
     fn set(&mut self, message: impl Into<String>, tone: Tone) {
@@ -408,7 +384,7 @@ impl<'a> App<'a> {
                 let mut lines: Vec<Line> = Vec::new();
                 lines.push(Line::from(vec![
                     Span::styled(post.id.clone(), Style::default().add_modifier(Modifier::BOLD)),
-                    Span::raw(format!("  {} · {} · {} chars", post.state, post.mode, post.body_chars())),
+                    Span::raw(format!("  {} · {} chars", post.state, post.body_chars())),
                 ]));
                 lines.push(Line::from(Span::styled(
                     format!("artifact  {}", post.artifact),
@@ -439,6 +415,12 @@ impl<'a> App<'a> {
                             post.media.join(", ")
                         ),
                         style,
+                    )));
+                }
+                if post.state == "draft" {
+                    lines.push(Line::from(Span::styled(
+                        "not approved — press a (runs the lint) before scheduling",
+                        Style::default().fg(Color::Yellow),
                     )));
                 }
                 if !post.note.is_empty() {
@@ -500,7 +482,7 @@ impl<'a> App<'a> {
                 vec![
                     Line::from(Span::styled(format!(" {}", self.message), tone_style)),
                     Line::from(Span::styled(
-                        " s send · S force · m mode · t schedule · c check · e edit · x cancel · y copy · o open · r reload · q quit",
+                        " s send · a approve · t schedule · c check · e edit · x cancel · y copy · o open · r reload · q quit",
                         Style::default().fg(Color::DarkGray),
                     )),
                 ]
@@ -526,20 +508,39 @@ mod tests {
         std::fs::write(
             dir.join("with-images.md"),
             "---\nid: \"with-images\"\nhook: \"un hook con imagenes\"\nartifact: \"https://example.com/c/2\"\n\
-             state: \"scheduled\"\nmode: \"confirm\"\nat: \"2026-10-29T09:10:00-05:00\"\nvisibility: \"PUBLIC\"\n\
+             state: \"scheduled\"\nat: \"2026-10-29T09:10:00-05:00\"\nvisibility: \"PUBLIC\"\n\
              media:\n  - \"01.png\"\n  - \"02-missing.png\"\nurn: \"\"\nposted_at: \"\"\nnote: \"\"\n---\nCuerpo con 7 cifras\n",
         )
         .unwrap();
         std::fs::write(
             dir.join("un-draft.md"),
             "---\nid: \"un-draft\"\nhook: \"un hook discutible\"\nartifact: \"https://example.com/c/1\"\n\
-             state: \"ready\"\nmode: \"confirm\"\nat: \"\"\nvisibility: \"PUBLIC\"\nmedia: []\n\
+             state: \"draft\"\nat: \"\"\nvisibility: \"PUBLIC\"\nmedia: []\n\
              urn: \"\"\nposted_at: \"\"\nnote: \"\"\n---\nCuerpo 42\n",
         )
         .unwrap();
         let mut cfg = crate::config::Config::default();
         cfg.queue = dir.clone();
         (cfg, dir)
+    }
+
+    fn render_selected(cfg: &crate::config::Config, id: &str) -> String {
+        let mut app = App {
+            cfg,
+            queue: Queue::open(&cfg.queue).unwrap(),
+            posts: Vec::new(),
+            selected: 0,
+            message: String::new(),
+            tone: Tone::Info,
+            input: None,
+            quit: false,
+        };
+        app.reload().unwrap();
+        app.selected = app.posts.iter().position(|p| p.id == id).unwrap_or(0);
+        let mut terminal = Terminal::new(TestBackend::new(120, 32)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        buffer.content.iter().map(|cell| cell.symbol()).collect()
     }
 
     fn render(cfg: &crate::config::Config) -> String {
@@ -585,24 +586,22 @@ mod tests {
     }
 
     #[test]
-    fn m_flips_between_confirm_and_auto() {
-        let (cfg, dir) = sandbox("toggle");
-        let mut app = App {
-            cfg: &cfg,
-            queue: Queue::open(&cfg.queue).unwrap(),
-            posts: Vec::new(),
-            selected: 0,
-            message: String::new(),
-            tone: Tone::Info,
-            input: None,
-            quit: false,
-        };
-        app.reload().unwrap();
-        assert_eq!(app.toggle_mode("un-draft").unwrap(), "auto");
+    fn a_approves_a_draft_and_the_detail_says_when_it_is_not() {
+        let (cfg, dir) = sandbox("approve");
+        let screen = render_selected(&cfg, "un-draft");
+        assert!(
+            screen.contains("not approved"),
+            "a draft says out loud that it is not approved"
+        );
+
+        let queue = Queue::open(&cfg.queue).unwrap();
+        crate::publish::approve(&queue, "un-draft", false).unwrap();
         assert!(std::fs::read_to_string(dir.join("un-draft.md"))
             .unwrap()
-            .contains("mode: \"auto\""));
-        assert_eq!(app.toggle_mode("un-draft").unwrap(), "confirm");
+            .contains("state: \"ready\""));
+
+        // Approving twice is a refusal: the gate is a transition, not a toggle.
+        assert!(crate::publish::approve(&queue, "un-draft", false).is_err());
     }
 
     #[test]

@@ -16,8 +16,6 @@ pub struct Config {
     pub queue: PathBuf,
     /// Optional index file (e.g. `PUBLISHED.md`) that `send` appends to.
     pub index: Option<PathBuf>,
-    /// `confirm` (default) or `auto`. See README: mode is per post too.
-    pub default_mode: String,
     /// Pinned LinkedIn API version. It rots; `doctor` enforces the deadline.
     pub api_version: String,
     /// After this date the pinned version must be bumped.
@@ -48,7 +46,6 @@ impl Default for Config {
             client_id: String::new(),
             queue: home.join(".config/mk-feed/drafts"),
             index: None,
-            default_mode: "confirm".into(),
             api_version: "202601".into(),
             api_version_stale_after: "2026-12-01".into(),
             redirect_port: 8787,
@@ -115,7 +112,6 @@ impl Config {
              client_id = \"\"                       # LinkedIn app client id (public)\n\
              queue = \"{}\"  # drafts dir: the queue is files\n\
              # index = \"{}\"  # optional: appended on every publish\n\
-             default_mode = \"confirm\"              # confirm | auto (see README)\n\
              api_version = \"{}\"                # pinned; rots every year\n\
              api_version_stale_after = \"{}\"\n\
              redirect_port = {}

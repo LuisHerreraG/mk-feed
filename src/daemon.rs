@@ -57,77 +57,23 @@ pub fn tick(cfg: &Config, queue: &Queue) -> Result<()> {
         .map(|p| p.id)
         .collect();
 
+    // `scheduled` means approved and timed: it fires. There is no confirmation
+    // step at publish time — approval happened before the schedule existed.
     for id in due {
-        let post = queue.get(&id)?;
-        if post.mode == "auto" {
-            match publish::execute(cfg, queue, &id, false, false) {
-                Ok(report) => {
-                    eprintln!(
-                        "[mk-feed] {} → {} ({})",
-                        id, report.state_after, report.message
-                    );
-                }
-                Err(err) => {
-                    eprintln!("[mk-feed] {id} refused: {err:#}");
-                    let mut failed = queue.get(&id)?;
-                    failed.note = format!("refused at publish time: {err:#}");
-                    queue.save(&failed)?;
-                }
+        match publish::execute(cfg, queue, &id, false, false) {
+            Ok(report) => eprintln!(
+                "[mk-feed] {} → {} ({})",
+                id, report.state_after, report.message
+            ),
+            Err(err) => {
+                eprintln!("[mk-feed] {id} refused: {err:#}");
+                let mut held = queue.get(&id)?;
+                held.note = format!("refused at publish time: {err:#}");
+                queue.save(&held)?;
             }
-        } else if !already_notified(cfg, &post.id, &post.at_raw)? {
-            if cfg.notify {
-                notify(&post.hook, &post.id);
-            }
-            remember_notified(cfg, &post.id, &post.at_raw)?;
-            log(
-                cfg,
-                &post,
-                "awaiting-confirm",
-                "due and waiting for a human keypress",
-            )?;
-            eprintln!("[mk-feed] {id} due → waiting for confirmation");
         }
     }
     Ok(())
-}
-
-fn notified_path(cfg: &Config) -> std::path::PathBuf {
-    cfg.state_file("notified.json")
-}
-
-fn already_notified(cfg: &Config, id: &str, at: &str) -> Result<bool> {
-    let key = format!("{id}@{at}");
-    let raw = std::fs::read_to_string(notified_path(cfg)).unwrap_or_default();
-    let list: Vec<String> = serde_json::from_str(&raw).unwrap_or_default();
-    Ok(list.contains(&key))
-}
-
-fn remember_notified(cfg: &Config, id: &str, at: &str) -> Result<()> {
-    std::fs::create_dir_all(&cfg.state_dir)?;
-    let path = notified_path(cfg);
-    let raw = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut list: Vec<String> = serde_json::from_str(&raw).unwrap_or_default();
-    list.push(format!("{id}@{at}"));
-    std::fs::write(path, serde_json::to_string(&list)?)?;
-    Ok(())
-}
-
-fn notify(hook: &str, id: &str) {
-    #[cfg(target_os = "macos")]
-    {
-        let safe_hook = hook.replace('"', "'").chars().take(120).collect::<String>();
-        let script = format!(
-            "display notification \"{}\" with title \"mk-feed\" subtitle \"{} ready to send\"",
-            safe_hook, id
-        );
-        let _ = std::process::Command::new("/usr/bin/osascript")
-            .args(["-e", &script])
-            .status();
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (hook, id);
-    }
 }
 
 fn log(cfg: &Config, post: &crate::state::Post, event: &str, message: &str) -> Result<()> {

@@ -218,35 +218,54 @@ fn boot_reconcile_turns_attempting_into_unknown() {
 }
 
 #[test]
-fn confirm_mode_waits_for_a_human() {
-    let sandbox = Sandbox::new("confirm");
+fn a_scheduled_post_publishes_itself() {
+    // `scheduled` means approved and timed: the daemon fires it with no
+    // keypress. Offline, so the attempt is visible as a failure and nothing
+    // reaches LinkedIn — but the fact that it *tried* is the contract.
+    let sandbox = Sandbox::new("auto-fire");
     sandbox.write_post("due-now", "", "cuerpo 7");
     let path = sandbox.drafts().join("due-now.md");
-    let raw = std::fs::read_to_string(&path).unwrap().replace(
-        "state: \"ready\"",
-        "state: \"scheduled\"",
-    ).replace(
-        "at: \"\"",
-        "at: \"2020-01-01T09:00:00-05:00\"",
-    );
+    let raw = std::fs::read_to_string(&path)
+        .unwrap()
+        .replace("state: \"ready\"", "state: \"scheduled\"")
+        .replace("at: \"\"", "at: \"2020-01-01T09:00:00-05:00\"");
     std::fs::write(&path, raw).unwrap();
+    plant_credentials(&sandbox);
 
     let out = sandbox.run(&["daemon", "--once"]);
-    assert_eq!(code(&out), 0);
+    clear_credentials(&sandbox);
+    assert_eq!(code(&out), 0, "{}", stdout(&out));
 
     let after = sandbox.read_post("due-now");
     assert!(
-        after.contains("state: \"scheduled\""),
-        "confirm mode must not publish on its own:\n{after}"
+        !after.contains("state: \"scheduled\""),
+        "a due post must not stay scheduled waiting for a human:\n{after}"
     );
-    let log = std::fs::read_to_string(sandbox.dir.join("state/publish.jsonl")).unwrap();
-    assert!(log.contains("awaiting-confirm"), "{log}");
+    let log = std::fs::read_to_string(sandbox.dir.join("state/publish.jsonl")).unwrap_or_default();
+    assert!(log.contains("attempting"), "{log}");
+}
 
-    // A second tick must not notify twice for the same instant.
-    let out = sandbox.run(&["daemon", "--once"]);
-    assert_eq!(code(&out), 0);
-    let log = std::fs::read_to_string(sandbox.dir.join("state/publish.jsonl")).unwrap();
-    assert_eq!(log.matches("awaiting-confirm").count(), 1, "{log}");
+#[test]
+fn scheduling_requires_approval() {
+    let sandbox = Sandbox::new("approval");
+    sandbox.write_post("unapproved", "", "cuerpo con 14 cifras");
+    let path = sandbox.drafts().join("unapproved.md");
+    let raw = std::fs::read_to_string(&path)
+        .unwrap()
+        .replace("state: \"ready\"", "state: \"draft\"");
+    std::fs::write(&path, raw).unwrap();
+
+    let refused = sandbox.run(&["schedule", "unapproved", "--at", "+2h"]);
+    assert_eq!(code(&refused), 3, "a draft cannot enter the calendar");
+    assert!(stdout(&refused).contains("not approved") || String::from_utf8_lossy(&refused.stderr).contains("not approved"));
+
+    let approved = sandbox.run(&["approve", "unapproved"]);
+    assert_eq!(code(&approved), 0, "{}", stdout(&approved));
+    assert!(sandbox.read_post("unapproved").contains("state: \"ready\""));
+
+    let scheduled = sandbox.run(&["schedule", "unapproved", "--at", "+2h"]);
+    assert_eq!(code(&scheduled), 0, "{}", stdout(&scheduled));
+    assert!(sandbox.read_post("unapproved").contains("state: \"scheduled\""));
 }
 
 #[test]

@@ -338,6 +338,35 @@ pub fn compose_commentary(post: &Post) -> String {
     }
 }
 
+/// Approval is the editorial gate: the lint runs here, and nothing enters the
+/// calendar without passing it. Deliberately separate from `send` — one is "this
+/// is worth publishing", the other is "publish it now".
+pub fn approve(queue: &Queue, id: &str, force: bool) -> Result<()> {
+    let mut post = queue.get(id)?;
+    if post.state != "draft" {
+        return Err(anyhow::Error::new(Refusal(format!(
+            "{} is {} — only a draft needs approval",
+            post.id, post.state
+        ))));
+    }
+    let issues = check::run(&post, &queue.dir);
+    let fails: Vec<String> = issues
+        .iter()
+        .filter(|i| i.is_fail())
+        .map(|i| i.message.clone())
+        .collect();
+    if !fails.is_empty() && !force {
+        return Err(anyhow::Error::new(Refusal(format!(
+            "{} fails the lint — {} (--force to override)",
+            post.id,
+            fails.join("; ")
+        ))));
+    }
+    post.state = "ready".into();
+    queue.save(&post)?;
+    Ok(())
+}
+
 /// Undo a publish: delete the post and put the draft back in the queue.
 /// Written for the honest use case — publishing a test post to prove the pipe
 /// works, then taking it down.

@@ -12,6 +12,12 @@ use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+/// The editorial gate lives in the states, not in a flag:
+///   draft     written, not approved
+///   ready     approved — `approve` ran the lint; scheduling is allowed from here
+///   scheduled approved + a moment; the daemon publishes it with no keypress
+///   attempting/posted/failed/unknown   the publish itself
+///   cancelled taken out on purpose
 pub const STATES: [&str; 8] = [
     "draft",
     "ready",
@@ -30,7 +36,6 @@ pub struct Post {
     pub state: String,
     pub hook: String,
     pub artifact: String,
-    pub mode: String,
     pub at: Option<DateTime<Utc>>,
     pub at_raw: String,
     pub visibility: String,
@@ -42,14 +47,13 @@ pub struct Post {
 }
 
 impl Post {
-    pub fn new(id: &str, hook: &str, artifact: &str, body: &str, mode: &str) -> Self {
+    pub fn new(id: &str, hook: &str, artifact: &str, body: &str) -> Self {
         Self {
             id: id.to_string(),
             path: PathBuf::new(),
             state: "ready".into(),
             hook: hook.to_string(),
             artifact: artifact.to_string(),
-            mode: mode.to_string(),
             at: None,
             at_raw: String::new(),
             visibility: "PUBLIC".into(),
@@ -76,7 +80,6 @@ impl Post {
         out.push_str(&format!("hook: {}\n", quote(&self.hook)));
         out.push_str(&format!("artifact: {}\n", quote(&self.artifact)));
         out.push_str(&format!("state: {}\n", quote(&self.state)));
-        out.push_str(&format!("mode: {}\n", quote(&self.mode)));
         out.push_str(&format!("at: {}\n", quote(&self.at_raw)));
         out.push_str(&format!("visibility: {}\n", quote(&self.visibility)));
         if self.media.is_empty() {
@@ -109,7 +112,7 @@ impl Post {
         // round trip is byte-stable.
         let body = rest[end + 4..].trim_start_matches('\n').trim_end().to_string();
 
-        let mut post = Post::new("", "", "", &body, "confirm");
+        let mut post = Post::new("", "", "", &body);
         post.path = path.to_path_buf();
         let mut last_list: Option<String> = None;
 
@@ -142,7 +145,6 @@ impl Post {
                 "hook" => post.hook = value,
                 "artifact" => post.artifact = value,
                 "state" => post.state = value,
-                "mode" => post.mode = value,
                 "at" => {
                     post.at_raw = value.clone();
                     post.at = parse_instant(&value).ok().map(|d| d.with_timezone(&Utc));
@@ -159,9 +161,6 @@ impl Post {
                 .file_stem()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_default();
-        }
-        if post.mode.is_empty() {
-            post.mode = "confirm".into();
         }
         Ok(post)
     }
