@@ -29,7 +29,7 @@ state: "scheduled"          # draft ready scheduled attempting posted failed unk
 mode: "confirm"             # auto | confirm
 at: "2026-11-02T09:10:00-05:00"
 visibility: "PUBLIC"
-media: []                   # 3 max, in order — publishing media is phase 2
+media: []                   # up to 3 images, in order — not uploads/tests
 urn: ""                     # set on publish; the public URL is derived from it
 posted_at: ""
 note: ""
@@ -143,6 +143,19 @@ src/state.rs    frontmatter, the queue, the lock
 src/daemon.rs   poll, notify, boot reconcile
 src/tui.rs      ratatui
 ```
+
+## Images
+
+Up to three, PNG or JPEG, listed in `media:` and resolved relative to the queue
+directory. One image uses `content.media`, several use `content.multiImage`, and
+the array order is the post order — which is the point of a format that says
+"arquitectura, captura, métricas".
+
+Uploads happen **before** the post is armed (`initializeUpload` then a single
+`PUT`), so an upload that fails publishes nothing and leaves the draft where it
+was. Personal tokens cannot poll image processing, so the first attempt may be
+rejected as "not ready": that is a 4xx, nothing was published, and one retry after
+a pause is safe. Verified end to end against the live API, 2026-10-28.
 
 `STYLE.md` beside the drafts is normative — `mk-feed style` prints it,
 `check` enforces it. The skill that drives this tool carries no paths, so it

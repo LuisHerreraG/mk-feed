@@ -111,12 +111,19 @@ pub fn run(post: &Post, queue_dir: &Path) -> Vec<Issue> {
             };
             if !path.exists() {
                 fail!("media-missing", format!("media file not found: {}", path.display()));
+            } else if std::fs::metadata(&path).map(|m| m.len() > 8 * 1024 * 1024).unwrap_or(false) {
+                fail!("media-size", format!("{item}: over 8 MB"));
             }
         }
-        fail!(
-            "media-unsupported",
-            "publishing with media is not implemented yet — post text only".into(),
-        );
+        for item in &post.media {
+            let lower = item.to_lowercase();
+            if !(lower.ends_with(".png") || lower.ends_with(".jpg") || lower.ends_with(".jpeg")) {
+                fail!(
+                    "media-format",
+                    format!("{item}: LinkedIn accepts PNG and JPEG here")
+                );
+            }
+        }
     }
 
     // LinkedIn renders no markdown: asterisks and backticks arrive verbatim.

@@ -86,6 +86,16 @@ impl Sandbox {
         std::fs::write(self.drafts().join(format!("{id}.md")), content).unwrap();
     }
 
+    fn write_post_with_media(&self, id: &str, media: &str) {
+        let content = format!(
+            "---\nid: \"{id}\"\nhook: \"un hook\"\nartifact: \"https://example.com/commit/abc123\"\n\
+             state: \"ready\"\nmode: \"confirm\"\nat: \"\"\nvisibility: \"PUBLIC\"\n\
+             media:\n  - \"{media}\"\nurn: \"\"\nposted_at: \"\"\nnote: \"\"\n---\n\
+             Cuerpo con 12 cifras y el artefacto https://example.com/commit/abc123\n"
+        );
+        std::fs::write(self.drafts().join(format!("{id}.md")), content).unwrap();
+    }
+
     fn read_post(&self, id: &str) -> String {
         std::fs::read_to_string(self.drafts().join(format!("{id}.md"))).unwrap()
     }
@@ -384,3 +394,58 @@ fn unpublish_cannot_reach_the_network_in_a_test() {
     assert!(sandbox.read_post("posted-once").contains("state: \"posted\""));
 }
 
+
+const PNG_1X1: [u8; 67] = [
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+    0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+    0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+    0x42, 0x60, 0x82,
+];
+
+#[test]
+fn media_is_validated_not_refused() {
+    let sandbox = Sandbox::new("media");
+    std::fs::write(sandbox.drafts().join("a.png"), PNG_1X1).unwrap();
+    sandbox.write_post_with_media("with-image", "a.png");
+
+    let ok = sandbox.run(&["check", "with-image", "--json"]);
+    let json: serde_json::Value = serde_json::from_str(&stdout(&ok)).unwrap();
+    let fails: Vec<&str> = json["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|i| i["level"] == "fail")
+        .map(|i| i["rule"].as_str().unwrap())
+        .collect();
+    assert!(fails.is_empty(), "an attached PNG must be publishable: {fails:?}");
+
+    sandbox.write_post_with_media("missing-image", "nope.png");
+    let missing = sandbox.run(&["check", "missing-image", "--json"]);
+    assert_eq!(code(&missing), 3);
+    let json: serde_json::Value = serde_json::from_str(&stdout(&missing)).unwrap();
+    let fails: Vec<&str> = json["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["rule"].as_str().unwrap())
+        .collect();
+    assert!(fails.contains(&"media-missing"), "{fails:?}");
+}
+
+#[test]
+fn a_failed_upload_publishes_nothing() {
+    let sandbox = Sandbox::new("media-offline");
+    std::fs::write(sandbox.drafts().join("a.png"), PNG_1X1).unwrap();
+    sandbox.write_post_with_media("upload-fails", "a.png");
+    plant_credentials(&sandbox);
+
+    let out = sandbox.run(&["send", "upload-fails"]);
+    clear_credentials(&sandbox);
+
+    let text = format!("{}{}", stdout(&out), String::from_utf8_lossy(&out.stderr)).to_lowercase();
+    assert!(text.contains("offline"), "{text}");
+    // Arm-last: an upload that cannot happen leaves the post exactly as it was.
+    let after = sandbox.read_post("upload-fails");
+    assert!(after.contains("state: \"ready\""), "{after}");
+}

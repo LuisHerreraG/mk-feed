@@ -35,6 +35,8 @@ impl std::error::Error for Refusal {}
 pub struct Report {
     /// The commentary exactly as it will go on the wire (escaped), for dry runs.
     pub payload: String,
+    /// Image urns attached to the post, in order.
+    pub media: Vec<String>,
     pub id: String,
     pub state_before: String,
     pub state_after: String,
@@ -75,18 +77,13 @@ pub fn execute(cfg: &Config, queue: &Queue, id: &str, force: bool, dry_run: bool
         ))));
     }
 
-    if !post.media.is_empty() {
-        return Err(anyhow::Error::new(Refusal(
-            "media publishing is not implemented yet (phase 2)".into(),
-        )));
-    }
-
     let commentary = compose_commentary(&post);
     let chars = commentary.chars().count();
 
     if dry_run {
         return Ok(Report {
             payload: crate::api::escape_little_format(&commentary),
+            media: Vec::new(),
             id: post.id.clone(),
             state_before: state_before.clone(),
             state_after: state_before,
@@ -117,6 +114,36 @@ pub fn execute(cfg: &Config, queue: &Queue, id: &str, force: bool, dry_run: bool
     let meta = auth::load_meta();
     let author = format!("urn:li:person:{}", meta.sub);
     let client = api::http()?;
+    let mut media_urns: Vec<String> = Vec::new();
+
+    // Images are uploaded before arming. An upload that fails publishes nothing,
+    // so the post must be left exactly where it was — same rule as the token.
+    if !post.media.is_empty() {
+        let mut urns = Vec::new();
+        for item in &post.media {
+            let path = if std::path::Path::new(item).is_absolute() {
+                std::path::PathBuf::from(item)
+            } else {
+                queue.dir.join(item)
+            };
+            let bytes = std::fs::read(&path).map_err(|e| {
+                anyhow::Error::new(Refusal(format!(
+                    "cannot read media {}: {e}",
+                    path.display()
+                )))
+            })?;
+            urns.push(api::upload_image(
+                &client,
+                &token,
+                &author,
+                &bytes,
+                &cfg.api_version,
+            )?);
+        }
+        // Personal tokens cannot poll readiness; give processing a moment.
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        media_urns = urns;
+    }
 
     let prior_state = post.state.clone();
     post.state = "attempting".into();
@@ -133,7 +160,25 @@ pub fn execute(cfg: &Config, queue: &Queue, id: &str, force: bool, dry_run: bool
         &commentary,
         &post.visibility,
         &cfg.api_version,
+        &media_urns,
     );
+
+    // Media that is still processing is a 4xx: nothing was published, so one
+    // retry after a pause is safe and is the only readiness signal available.
+    if let Err((SendError::Rejected(msg), _)) = &outcome {
+        if api::looks_like_media_not_ready(msg) {
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            outcome = api::create_post(
+                &client,
+                &token,
+                &author,
+                &commentary,
+                &post.visibility,
+                &cfg.api_version,
+                &media_urns,
+            );
+        }
+    }
 
     // A 401 means nothing was published, so refreshing and trying once is safe.
     if let Err((SendError::Rejected(msg), stale)) = &outcome {
@@ -147,6 +192,7 @@ pub fn execute(cfg: &Config, queue: &Queue, id: &str, force: bool, dry_run: bool
                 &commentary,
                 &post.visibility,
                 &cfg.api_version,
+                &media_urns,
             );
         }
     }
@@ -167,6 +213,7 @@ pub fn execute(cfg: &Config, queue: &Queue, id: &str, force: bool, dry_run: bool
                 id: post.id.clone(),
                 state_before: prior_state,
                 state_after: "posted".into(),
+                media: media_urns.clone(),
                 urn,
                 url,
                 chars,
@@ -184,6 +231,7 @@ pub fn execute(cfg: &Config, queue: &Queue, id: &str, force: bool, dry_run: bool
                 id: post.id.clone(),
                 state_before: prior_state,
                 state_after: "failed".into(),
+                media: media_urns.clone(),
                 urn: String::new(),
                 url: String::new(),
                 chars,
@@ -201,6 +249,7 @@ pub fn execute(cfg: &Config, queue: &Queue, id: &str, force: bool, dry_run: bool
                 id: post.id.clone(),
                 state_before: prior_state,
                 state_after: "unknown".into(),
+                media: media_urns.clone(),
                 urn: String::new(),
                 url: String::new(),
                 chars,

@@ -586,6 +586,7 @@ fn send(cli: &Cli, ctx: &Ctx, id: &str, dry_run: bool, force: bool) -> Result<i3
             "chars": report.chars,
             "message": report.message,
             "payload": report.payload,
+            "media": report.media,
             "warnings": report.warnings,
         }),
         || {
