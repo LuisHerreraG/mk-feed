@@ -1,10 +1,9 @@
 //! The daemon: poll the queue, publish what is due, notify what needs a human.
 //!
 //! Started through `ops/daemon.sh` by whatever supervisor you run, so it must
-//! survive restarts without
-//! ever re-publishing. That is the whole reason state is
-//! written to disk *before* the POST: on boot, `attempting` becomes `unknown`
-//! and is never retried automatically.
+//! survive restarts without ever re-publishing. That is the whole reason state
+//! is written to disk *before* the POST: on boot, `attempting` becomes
+//! `unknown` and is never retried automatically.
 
 use crate::config::Config;
 use crate::output::Ctx;
