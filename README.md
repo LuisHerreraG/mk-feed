@@ -56,7 +56,10 @@ That is the whole restart story, and `tests/cli.rs` proves it.
 ## Modes
 
 `confirm` is the default and `auto` must be asked for — per post
-(`schedule --mode auto`) or per config (`default_mode`). A missed post costs a
+(`schedule --mode auto`), from the TUI with `m`, or per config (`default_mode`).
+`confirm` means the daemon **notifies and waits**: it never publishes by itself,
+and a due post shows up as `scheduled*` in `list`, fails the `due` check in
+`doctor`, and carries a `!` in the TUI until someone presses `s`. A missed post costs a
 slot; an unattended bad post costs credibility with the exact audience this
 feed exists for.
 

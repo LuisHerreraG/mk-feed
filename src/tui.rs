@@ -33,6 +33,7 @@ enum Intent {
     Send { force: bool },
     Check,
     Schedule(String),
+    ToggleMode,
     Cancel,
     Edit,
     Copy,
@@ -160,6 +161,7 @@ impl<'a> App<'a> {
             KeyCode::Char('c') => return Intent::Check,
             KeyCode::Char('s') => return Intent::Send { force: false },
             KeyCode::Char('S') => return Intent::Send { force: true },
+            KeyCode::Char('m') => return Intent::ToggleMode,
             KeyCode::Char('t') => {
                 self.input = Some(Input {
                     prompt: "when? (2026-11-02 09:10 / +2h) — Enter to schedule".into(),
@@ -249,6 +251,20 @@ impl<'a> App<'a> {
                     Err(err) => self.set(format!("{err:#}"), Tone::Error),
                 }
             }
+            Intent::ToggleMode => {
+                match self.toggle_mode(&post.id) {
+                    Ok(mode) => {
+                        let note = if mode == "auto" {
+                            "auto: it publishes itself at its time"
+                        } else {
+                            "confirm: it waits for s"
+                        };
+                        self.set(format!("{} — mode {}", post.id, note), Tone::Info);
+                        self.reload()?;
+                    }
+                    Err(err) => self.set(format!("{err:#}"), Tone::Error),
+                }
+            }
             Intent::Cancel => {
                 let mut fresh = self.queue.get(&post.id)?;
                 if fresh.state == "posted" {
@@ -307,6 +323,22 @@ impl<'a> App<'a> {
             }
         }
         Ok(())
+    }
+
+    /// `confirm` → `auto` → `confirm`. The only place a post becomes hands-off,
+    /// so it gets a key of its own and says what it did.
+    fn toggle_mode(&mut self, id: &str) -> Result<String> {
+        let mut post = self.queue.get(id)?;
+        if matches!(post.state.as_str(), "posted" | "cancelled") {
+            anyhow::bail!("{} is {} — its mode no longer matters", post.id, post.state);
+        }
+        post.mode = if post.mode == "auto" {
+            "confirm".into()
+        } else {
+            "auto".into()
+        };
+        self.queue.save(&post)?;
+        Ok(post.mode)
     }
 
     fn set(&mut self, message: impl Into<String>, tone: Tone) {
@@ -468,7 +500,7 @@ impl<'a> App<'a> {
                 vec![
                     Line::from(Span::styled(format!(" {}", self.message), tone_style)),
                     Line::from(Span::styled(
-                        " s send · S force · t schedule · c check · e edit · x cancel · y copy · o open · r reload · q quit",
+                        " s send · S force · m mode · t schedule · c check · e edit · x cancel · y copy · o open · r reload · q quit",
                         Style::default().fg(Color::DarkGray),
                     )),
                 ]
@@ -550,6 +582,27 @@ mod tests {
             "the detail lists the filenames in order"
         );
         assert!(screen.contains("media"), "there is a media line");
+    }
+
+    #[test]
+    fn m_flips_between_confirm_and_auto() {
+        let (cfg, dir) = sandbox("toggle");
+        let mut app = App {
+            cfg: &cfg,
+            queue: Queue::open(&cfg.queue).unwrap(),
+            posts: Vec::new(),
+            selected: 0,
+            message: String::new(),
+            tone: Tone::Info,
+            input: None,
+            quit: false,
+        };
+        app.reload().unwrap();
+        assert_eq!(app.toggle_mode("un-draft").unwrap(), "auto");
+        assert!(std::fs::read_to_string(dir.join("un-draft.md"))
+            .unwrap()
+            .contains("mode: \"auto\""));
+        assert_eq!(app.toggle_mode("un-draft").unwrap(), "confirm");
     }
 
     #[test]
