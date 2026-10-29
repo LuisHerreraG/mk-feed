@@ -114,10 +114,16 @@ document; never parse the human output.
 
 ## The daemon
 
-a supervisor, which renders `interpreter: "bash"`:
+Any supervisor works — launchd, systemd, cron, or a process manager of your
+choice — pointed at `ops/daemon.sh`, with the repo root as the working directory.
+
+The wrapper is three lines because many supervisors run scripts through a shell:
+`exec` replaces that shell with the Rust process, so the supervisor's pid, signals
+and log capture belong to the daemon itself.
 
 ```bash
-a supervisor start ops/daemon.sh --name mk-feed --interpreter bash
+./ops/daemon.sh     # foreground first: watch it tick
+# then register it with whatever keeps processes alive on your machine
 ```
 
 ## Layout
@@ -151,6 +157,13 @@ mk-feed mark <id> --url <post-url>   # closes the loop: state, log, PUBLISHED.md
 `mark` writes the same log entry and the same index row a real publish does, so
 the record does not care how the bytes arrived. What you lose is the click, not
 the bookkeeping.
+
+## Scope
+
+A personal tool, published because the work is worth reading. It does one
+network, text only, on one machine. Issues may go unanswered and there is no
+roadmap: the pinned `LinkedIn-Version` is the thing most likely to rot first,
+and `doctor` is what will say so.
 
 ## Not here yet
 

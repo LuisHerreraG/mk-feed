@@ -1,7 +1,8 @@
 //! The daemon: poll the queue, publish what is due, notify what needs a human.
 //!
-//! Started by a supervisor through `ops/daemon.sh` , so it must survive
-//! restarts without ever re-publishing. That is the whole reason state is
+//! Started through `ops/daemon.sh` by whatever supervisor you run, so it must
+//! survive restarts without
+//! ever re-publishing. That is the whole reason state is
 //! written to disk *before* the POST: on boot, `attempting` becomes `unknown`
 //! and is never retried automatically.
 

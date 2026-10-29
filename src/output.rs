@@ -1,7 +1,7 @@
 //! Exit codes and the machine contract.
 //!
-//! The table is deliberately identical to `a supervisor`'s, so an agent that learns
-//! one learns the other: 0 ok, 1 error, 2 usage, 3 refused, 4 partial.
+//! The table is the contract an agent codes against: 0 ok, 1 error, 2 usage,
+//! 3 refused, 4 partial (warnings, or an unknown publish).
 
 use serde_json::Value;
 use std::io::IsTerminal;

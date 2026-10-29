@@ -24,6 +24,10 @@ pub struct Config {
     pub api_version_stale_after: String,
     /// Loopback port for the OAuth redirect.
     pub redirect_port: u16,
+    /// Overrides the derived redirect URI. Needed when LinkedIn refuses an
+    /// `http://127.0.0.1` redirect: register any https URL and use the paste
+    /// flow (`mk-feed auth --url '<redirected URL>'`).
+    pub redirect_uri: Option<String>,
     /// `PUBLIC` or `CONNECTIONS`.
     pub visibility: String,
     /// IANA zone used to interpret naive timestamps in `schedule --at`.
@@ -45,6 +49,7 @@ impl Default for Config {
             api_version: "202601".into(),
             api_version_stale_after: "2026-12-01".into(),
             redirect_port: 8787,
+            redirect_uri: None,
             visibility: "PUBLIC".into(),
             timezone: "America/Lima".into(),
             notify: true,
@@ -109,7 +114,8 @@ impl Config {
              default_mode = \"confirm\"              # confirm | auto (see README)\n\
              api_version = \"{}\"                # pinned; rots every year\n\
              api_version_stale_after = \"{}\"\n\
-             redirect_port = {}\n\
+             redirect_port = {}
+             # redirect_uri = \"https://...\"   # only if LinkedIn refuses loopback (paste flow)\n\
              visibility = \"PUBLIC\"                 # PUBLIC | CONNECTIONS\n\
              timezone = \"{}\"\n\
              notify = true\n\
@@ -131,6 +137,9 @@ impl Config {
     }
 
     pub fn redirect_uri(&self) -> String {
+        if let Some(uri) = &self.redirect_uri {
+            return uri.clone();
+        }
         format!("http://127.0.0.1:{}/callback", self.redirect_port)
     }
 
