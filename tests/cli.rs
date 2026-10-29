@@ -509,7 +509,7 @@ fn a_due_post_is_visible_without_a_notification() {
     // The OS may swallow a notification; these two surfaces cannot.
     let list = sandbox.run(&["list"]);
     let text = stdout(&list);
-    assert!(text.contains("waiting*"), "the row is marked due: {text}");
+    assert!(text.contains("scheduled*"), "the row is marked due: {text}");
     assert!(text.contains("due since"), "and the list says so: {text}");
 
     let doctor = sandbox.run(&["doctor", "--json"]);
