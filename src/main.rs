@@ -650,7 +650,7 @@ fn doctor(cli: &Cli, ctx: &Ctx, online: bool) -> Result<i32> {
             if keychain::has(keychain::ACC_SECRET) {
                 "in Keychain".into()
             } else {
-                "missing — security add-generic-password -U -a linkedin.client_secret -s mk-feed -w '<secret>'".into()
+                "missing — copy it in the portal, then: pbpaste | mk-feed auth --store-secret".into()
             },
         );
 
